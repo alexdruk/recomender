@@ -24,6 +24,9 @@ function loadConfig() {
     textDir: path.join(dataDir, 'text'),
     feedDir: path.join(dataDir, 'feed'),
     feedTextDir: path.join(dataDir, 'feed', 'text'),
+    fb2Dir: path.join(dataDir, 'fb2'), // cache of downloaded .fb2.zip files
+    likedFb2TextDir: path.join(dataDir, 'text-fb2'), // liked books, text from the FB2 file
+    matchedTextDir: path.join(dataDir, 'matched', 'text'),
     dbPath: path.join(dataDir, 'books.db'),
     catalogPath: path.join(dataDir, 'catalog.db'),
     sqlDir: path.join(dataDir, 'sql'),
@@ -99,6 +102,19 @@ function openDb(cfg) {
     CREATE UNIQUE INDEX IF NOT EXISTS parsed_key ON parsed (source, key);
     CREATE TABLE IF NOT EXISTS books (${BOOK_COLUMNS});
     CREATE TABLE IF NOT EXISTS feed_books (${BOOK_COLUMNS});
+    -- milestone 3: random catalog books with the same year spread as the liked books
+    CREATE TABLE IF NOT EXISTS matched_books (${BOOK_COLUMNS});
+    -- milestone 3: my answers from the labelling page (label: never / maybe / want)
+    CREATE TABLE IF NOT EXISTS labels (
+      key TEXT PRIMARY KEY,
+      label TEXT NOT NULL,
+      time TEXT NOT NULL
+    );
+    -- milestone 3: favourite liked books
+    CREATE TABLE IF NOT EXISTS stars (
+      key TEXT PRIMARY KEY,
+      time TEXT NOT NULL
+    );
     -- books dropped by dedupe, and which book was kept instead
     CREATE TABLE IF NOT EXISTS duplicates (
       source TEXT NOT NULL,

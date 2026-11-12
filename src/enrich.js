@@ -32,9 +32,27 @@ const EXTRA = {
   in_archive: 'INTEGER',
 };
 
+// Which rows of "parsed" each final table is built from, and its "source" value.
+const PARSED_SOURCE = { books: 'archive', feed_books: 'feed', matched_books: 'matched' };
+
 function addColumns(db, table) {
   const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((r) => r.name));
   for (const [name, type] of Object.entries(EXTRA)) if (!have.has(name)) db.exec(`ALTER TABLE ${table} ADD COLUMN ${name} ${type}`);
+  if (table !== 'books' && !have.has('source')) db.exec(`ALTER TABLE ${table} ADD COLUMN source TEXT`);
+}
+
+// The view "unlabeled_books": every book that may be shown or scored as
+// unlabeled - feed books and matched background books that are Russian-language
+// fiction, parsed, not already liked and not a collection.
+function createUnlabeledView(db) {
+  const cols = ['key', 'source_file', 'format', 'authors', 'title', 'genres', 'lang', 'src_lang', 'translators', 'series', 'series_no',
+    'year', 'annotation', 'chars', 'words', 'is_translation', 'label', 'parse_status', ...Object.keys(EXTRA), 'source'].join(', ');
+  const where = "parse_status != 'failed' AND lang = 'ru' AND is_fiction = 1 AND COALESCE(in_archive, 0) = 0 AND COALESCE(is_collection, 0) = 0";
+  db.exec(`DROP VIEW IF EXISTS unlabeled_books;
+    CREATE VIEW unlabeled_books AS
+      SELECT ${cols} FROM feed_books WHERE ${where}
+      UNION ALL
+      SELECT ${cols} FROM matched_books WHERE ${where} AND key NOT IN (SELECT key FROM feed_books)`);
 }
 
 // ---------------------------------------------------------------- collections
@@ -103,7 +121,7 @@ function openCatalog(cfg) {
 function enrichTable(db, cfg, table, cat, map) {
   addColumns(db, table);
   const liked = table === 'books';
-  const rows = db.prepare(`SELECT t.*, p.norm FROM ${table} t LEFT JOIN parsed p ON p.source = ? AND p.key = t.key`).all(liked ? 'archive' : 'feed');
+  const rows = db.prepare(`SELECT t.*, p.norm FROM ${table} t LEFT JOIN parsed p ON p.source = ? AND p.key = t.key`).all(PARSED_SOURCE[table]);
   const archiveNorms = new Set(db.prepare("SELECT norm FROM parsed WHERE source = 'archive' AND norm IS NOT NULL").all().map((r) => r.norm));
   const archiveIds = new Set(db.prepare("SELECT source_file FROM parsed WHERE source = 'archive'").all().map((r) => c.flibustaId(r.source_file)).filter(Boolean));
   const update = db.prepare(`UPDATE ${table} SET genres = @genres, year = @year, src_lang = @src_lang, series = @series, series_no = @series_no,
@@ -158,6 +176,7 @@ function enrichTable(db, cfg, table, cat, map) {
       if (inArchive) stats.inArchive++;
       if (!liked && fiction && r.lang === 'ru' && !inArchive && !collection && r.parse_status !== 'failed') stats.candidates++;
     }
+    if (!liked) db.prepare(`UPDATE ${table} SET source = ?`).run(PARSED_SOURCE[table]);
   })();
   return stats;
 }
@@ -169,11 +188,13 @@ function enrichAll(db, cfg) {
   try {
     const liked = enrichTable(db, cfg, 'books', cat, map);
     const feed = enrichTable(db, cfg, 'feed_books', cat, map);
+    const matched = enrichTable(db, cfg, 'matched_books', cat, map);
+    createUnlabeledView(db);
     const unmapped = new Map(liked.unmapped);
     for (const [g, n] of feed.unmapped) unmapped.set(g, (unmapped.get(g) || 0) + n);
     c.setMeta(db, 'unmapped_genres', [...unmapped].sort((a, b) => b[1] - a[1]).map(([code, books]) => ({ code, books })));
     c.setMeta(db, 'has_catalog', !!cat);
-    return { liked, feed, map, hasCatalog: !!cat };
+    return { liked, feed, matched, map, hasCatalog: !!cat };
   } finally {
     if (cat) cat.close();
   }
@@ -182,11 +203,12 @@ function enrichAll(db, cfg) {
 async function main() {
   const cfg = c.loadConfig();
   const db = c.openDb(cfg);
-  const { liked, feed, map } = enrichAll(db, cfg);
+  const { liked, feed, matched, map } = enrichAll(db, cfg);
   console.log(`Genre map: ${Object.keys(map.codes).length} codes in ${Object.keys(map.groups).length} groups, ${map.unmapped.length} codes unmapped`);
   console.log(`Liked books: ${liked.total}; found in the catalog: ${liked.inCatalog}; with a genre: ${liked.withGenre} (${c.pct(liked.withGenre, liked.total)}); STILL NO GENRE: ${liked.noGenre.length}; collections: ${liked.collections}`);
   if (liked.noGenre.length) console.log('  no genre: ' + liked.noGenre.join(', '));
   console.log(`Feed books: ${feed.total}; found in the catalog: ${feed.inCatalog}; with a genre: ${feed.withGenre}; fiction: ${feed.fiction}; already in the archive: ${feed.inArchive}; collections: ${feed.collections}; candidates: ${feed.candidates}`);
+  if (matched.total) console.log(`Matched background books: ${matched.total}; fiction: ${matched.fiction}; already in the archive: ${matched.inArchive}; collections: ${matched.collections}; usable: ${matched.candidates}`);
   db.close();
 }
 
@@ -197,4 +219,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, enrichAll, isCollection };
+module.exports = { main, enrichAll, isCollection, openCatalog };

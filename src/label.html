@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Book labels</title>
+<style>
+  :root {
+    --bg: #f6f4ef; --card: #fffdf8; --ink: #23201b; --soft: #6f695e; --line: #ddd6c8;
+    --never: #b3402f; --maybe: #8a6d1c; --want: #2f7a4b; --star: #d69a00; --focus: #2b5fb3;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg: #1b1a17; --card: #26241f; --ink: #ece7dc; --soft: #a39c8d; --line: #3b382f;
+      --never: #e07a68; --maybe: #d8b550; --want: #6cc48d; --star: #f2bd2e; --focus: #86aef0; }
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.5 Georgia, "Times New Roman", serif; }
+  main { max-width: 760px; margin: 0 auto; padding: 16px; }
+  nav { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; font-family: system-ui, sans-serif; }
+  nav button { font: inherit; font-size: 15px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--soft); cursor: pointer; }
+  nav button[aria-selected="true"] { background: var(--card); color: var(--ink); border-color: var(--ink); }
+  #counter { margin-left: auto; font-size: 14px; color: var(--soft); text-align: right; font-variant-numeric: tabular-nums; }
+  .card { background: var(--card); border: 1px solid var(--line); border-radius: 12px; padding: 22px 24px; min-height: 300px; }
+  .author { color: var(--soft); font-size: 16px; }
+  h1 { font-size: 26px; line-height: 1.25; margin: 4px 0 12px; text-wrap: balance; }
+  .facts { font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; }
+  .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
+  .chip { font-family: system-ui, sans-serif; font-size: 13px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; }
+  .annotation { white-space: pre-wrap; overflow-wrap: anywhere; }
+  .annotation.none { color: var(--soft); font-style: italic; }
+  .answers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; font-family: system-ui, sans-serif; }
+  .answers button, #undo { font: inherit; font-size: 15px; padding: 12px 8px; border-radius: 10px; border: 2px solid; background: var(--card); cursor: pointer; }
+  .answers button:hover, #undo:hover { filter: brightness(0.96); }
+  button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  kbd { font: 12px ui-monospace, monospace; border: 1px solid currentColor; border-radius: 4px; padding: 0 5px; margin-right: 6px; }
+  #b-never { color: var(--never); } #b-maybe { color: var(--maybe); } #b-want { color: var(--want); }
+  .under { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); gap: 12px; }
+  #undo { padding: 6px 12px; border-width: 1px; color: var(--soft); font-size: 14px; }
+  #said { min-height: 1.5em; }
+  .list-head { font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); margin-bottom: 8px; }
+  .group { margin: 18px 0 4px; font-weight: bold; }
+  .row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
+  .star { font-size: 20px; line-height: 1; border: 0; background: none; color: var(--line); cursor: pointer; padding: 0 4px; }
+  .star[aria-pressed="true"] { color: var(--star); }
+  .row small { color: var(--soft); font-family: system-ui, sans-serif; }
+  [hidden] { display: none !important; }
+</style>
+</head>
+<body>
+<main>
+  <nav role="tablist">
+    <button role="tab" id="tab-new" aria-selected="true">New books</button>
+    <button role="tab" id="tab-mine" aria-selected="false">My books</button>
+    <div id="counter"></div>
+  </nav>
+
+  <section id="view-new">
+    <div class="card" id="card"></div>
+    <div class="answers">
+      <button id="b-never"><kbd>1</kbd>Would never read</button>
+      <button id="b-maybe"><kbd>2</kbd>Maybe</button>
+      <button id="b-want"><kbd>3</kbd>Want to read</button>
+    </div>
+    <div class="under">
+      <span id="said"></span>
+      <button id="undo"><kbd>Backspace</kbd>Undo last answer</button>
+    </div>
+  </section>
+
+  <section id="view-mine" hidden>
+    <div class="list-head" id="mine-head"></div>
+    <div id="mine"></div>
+  </section>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const NAMES = { never: 'would never read', maybe: 'maybe', want: 'want to read' };
+let current = null;
+let busy = false;
+
+function el(tag, cls, text) {
+  const e = document.createElement(tag);
+  if (cls) e.className = cls;
+  if (text != null) e.textContent = text;
+  return e;
+}
+
+async function api(path, body) {
+  const res = await fetch(path, body ? { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(body) } : undefined);
+  if (!res.ok) throw new Error((await res.json().catch(() => ({}))).error || 'request failed');
+  return res.json();
+}
+
+function showCounts(n) {
+  $('counter').textContent = `${n.done} done (${n.never} never, ${n.maybe} maybe, ${n.want} want) - ${n.left} waiting`;
+}
+
+function showBook(book) {
+  current = book;
+  const card = $('card');
+  card.replaceChildren();
+  if (!book) {
+    card.append(el('p', 'annotation none', 'No more books waiting. New ones appear here as they are downloaded - press any answer key or reload to look again.'));
+    return;
+  }
+  card.append(el('div', 'author', book.authors || 'Unknown author'), el('h1', null, book.title));
+  const facts = el('div', 'facts');
+  if (book.series) facts.append(el('span', null, 'Series: ' + book.series));
+  facts.append(el('span', null, book.words.toLocaleString('en-US') + ' words'));
+  card.append(facts);
+  const chips = el('div', 'chips');
+  for (const g of book.groups) chips.append(el('span', 'chip', g));
+  card.append(chips);
+  card.append(el('div', book.annotation ? 'annotation' : 'annotation none', book.annotation || 'No annotation.'));
+}
+
+async function load() {
+  try {
+    const r = await api('/api/next');
+    showBook(r.book);
+    showCounts(r.counts);
+  } catch (e) { $('said').textContent = 'Error: ' + e.message; }
+}
+
+async function answer(label) {
+  if (busy) return;
+  if (!current) return load();
+  busy = true;
+  try {
+    const title = current.title;
+    const r = await api('/api/label', { key: current.key, label });
+    $('said').textContent = `"${title}" - ${NAMES[label]}`;
+    showBook(r.book);
+    showCounts(r.counts);
+  } catch (e) { $('said').textContent = 'Error: ' + e.message; }
+  busy = false;
+}
+
+async function undo() {
+  if (busy) return;
+  busy = true;
+  try {
+    const r = await api('/api/undo', {});
+    $('said').textContent = r.undone ? 'Last answer taken back.' : 'Nothing to undo.';
+    if (r.undone) showBook(r.book);
+    showCounts(r.counts);
+  } catch (e) { $('said').textContent = 'Error: ' + e.message; }
+  busy = false;
+}
+
+async function loadMine() {
+  const r = await api('/api/liked');
+  const head = $('mine-head');
+  const setHead = (n) => { head.textContent = `${r.books.length} liked books, ${n} starred. Click a star to mark a favourite.`; };
+  setHead(r.starred);
+  const box = $('mine');
+  box.replaceChildren();
+  let author = null;
+  for (const b of r.books) {
+    if (b.authors !== author) { author = b.authors; box.append(el('div', 'group', author || 'Unknown author')); }
+    const row = el('div', 'row');
+    const star = el('button', 'star', '★');
+    star.setAttribute('aria-pressed', String(b.starred));
+    star.setAttribute('aria-label', 'Favourite: ' + b.title);
+    star.onclick = async () => {
+      const on = star.getAttribute('aria-pressed') !== 'true';
+      const s = await api('/api/star', { key: b.key, starred: on });
+      star.setAttribute('aria-pressed', String(on));
+      setHead(s.starred);
+    };
+    row.append(star, el('span', null, b.title));
+    if (b.series) row.append(el('small', null, b.series));
+    box.append(row);
+  }
+}
+
+function tab(which) {
+  $('tab-new').setAttribute('aria-selected', String(which === 'new'));
+  $('tab-mine').setAttribute('aria-selected', String(which === 'mine'));
+  $('view-new').hidden = which !== 'new';
+  $('view-mine').hidden = which !== 'mine';
+  if (which === 'mine') loadMine();
+}
+
+$('tab-new').onclick = () => tab('new');
+$('tab-mine').onclick = () => tab('mine');
+$('b-never').onclick = () => answer('never');
+$('b-maybe').onclick = () => answer('maybe');
+$('b-want').onclick = () => answer('want');
+$('undo').onclick = undo;
+document.addEventListener('keydown', (e) => {
+  if ($('view-new').hidden || e.metaKey || e.ctrlKey || e.altKey) return;
+  if (e.key === '1') answer('never');
+  else if (e.key === '2') answer('maybe');
+  else if (e.key === '3') answer('want');
+  else if (e.key === 'Backspace') { e.preventDefault(); undo(); }
+});
+load();
+</script>
+</body>
+</html>
