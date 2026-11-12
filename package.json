@@ -2,7 +2,7 @@
   "name": "recomender",
   "version": "0.1.0",
   "private": true,
-  "description": "Personal book recommender - milestone 1: clean library database and feed probe",
+  "description": "Personal book recommender - library database, feed collector and baseline score",
   "type": "commonjs",
   "engines": {
     "node": ">=22 <23"
@@ -14,7 +14,12 @@
     "parse-epub": "node src/parse-epub.js",
     "dedupe": "node src/dedupe.js",
     "inventory": "node src/inventory.js",
-    "probe-feed": "node src/probe-feed.js"
+    "probe-feed": "node src/probe-feed.js",
+    "catalog": "node src/fetch-catalog.js",
+    "feed": "node src/fetch-feed.js",
+    "genre-map": "node src/build-genre-map.js",
+    "enrich": "node src/enrich.js",
+    "baseline": ".venv/bin/python model/baseline.py"
   },
   "dependencies": {
     "better-sqlite3": "^13.1.1",

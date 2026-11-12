@@ -1,6 +1,7 @@
 'use strict';
-// Step 9. Runs steps 1 to 8 in order:
-//   unpack -> parse FB2 -> parse EPUB -> dedupe and store -> inventory report -> feed probe
+// Runs the library steps in order:
+//   unpack -> parse FB2 -> parse EPUB -> dedupe and store -> inventory report
+//   -> feed probe (only until the feed collector has run) -> genres and cleaning
 
 const steps = [
   ['1. Unpack the archive', './unzip'],
@@ -9,6 +10,7 @@ const steps = [
   ['4. Dedupe and fill the books table', './dedupe'],
   ['5. Inventory report', './inventory'],
   ['6. Feed probe', './probe-feed'],
+  ['7. Genres from the catalog, collections, genre groups', './enrich'],
 ];
 
 async function main() {
