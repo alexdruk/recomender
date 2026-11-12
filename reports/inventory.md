@@ -8,7 +8,7 @@ Built from `data/books.db` by `src/inventory.js`. All archive books carry the la
 | --- | --- |
 | Archive.zip size | 336.2 MB |
 | Files unpacked (without macOS junk) | 22,047 |
-| macOS junk files ignored (`__MACOSX`, `._*`) | 3 |
+| macOS junk files ignored (`__MACOSX`, `._*`) | 4 |
 | Nested archives unpacked | 0 |
 | Book files found | 311 |
 | Parsed successfully | 311 (100.0%) |
@@ -74,13 +74,97 @@ A book counts as translated when it names a translator, or when its source langu
 | Original | 255 | 82.5% |
 | Translated | 54 | 17.5% |
 
-No book in the archive states its source language (the EPUB files do not carry that field).
+| Source language | Books |
+| --- | --- |
+| en | 38 |
+| ru | 19 |
+| sv | 5 |
+| fr | 3 |
+| pl | 2 |
+| no | 1 |
+| ja | 1 |
+| it | 1 |
+| es | 1 |
+| de | 1 |
 
 ## By genre
 
-Books with at least one genre: 0 of 309 (0.0%).
+Books with at least one genre: 309 of 309 (100.0%).
 
-**No genre data.** The archive books are EPUB files converted from FB2, and the converter did not copy the genre into the EPUB metadata. Genres will have to come from somewhere else (for example the Flibusta book id, which is in every file name).
+| Genre | Books |
+| --- | --- |
+| love_sf | 125 |
+| network_literature | 122 |
+| sf_fantasy | 43 |
+| popadancy | 34 |
+| sf_detective | 27 |
+| sf_action | 23 |
+| prose_contemporary | 22 |
+| sf_fantasy_city | 22 |
+| sf_humor | 22 |
+| sf_social | 13 |
+| sf_heroic | 10 |
+| thriller | 9 |
+| fan_translation | 8 |
+| sf_history | 8 |
+| sf | 7 |
+| sf_space | 7 |
+| sf_technofantasy | 7 |
+| adventure | 6 |
+| detective | 6 |
+| love_contemporary | 6 |
+| adv_history | 5 |
+| boyar_anime | 5 |
+| russian_fantasy | 5 |
+| dark_fantasy | 4 |
+| det_police | 4 |
+| everyday_fantasy | 4 |
+| love_erotica | 4 |
+| sf_cyberpunk | 4 |
+| sf_litrpg | 4 |
+| sf_realrpg | 4 |
+| sf_stimpank | 4 |
+| det_crime | 3 |
+| det_hard | 3 |
+| det_history | 3 |
+| fantasy_det | 3 |
+| magic_school | 3 |
+| nonf_biography | 3 |
+| prose_history | 3 |
+| prose_military | 3 |
+| adv_maritime | 2 |
+| prose_magic | 2 |
+| sf_mystic | 2 |
+| sf_postapocalyptic | 2 |
+| sf_su | 2 |
+| adv_geo | 1 |
+| adv_indian | 1 |
+| adv_modern | 1 |
+| adventure_fantasy | 1 |
+| det_action | 1 |
+| det_classic | 1 |
+| det_irony | 1 |
+| dorama | 1 |
+| dystopian | 1 |
+| fairy_fantasy | 1 |
+| foreign_prose | 1 |
+| humor_prose | 1 |
+| love | 1 |
+| love_history | 1 |
+| love_short | 1 |
+| nonf_publicism | 1 |
+| other | 1 |
+| prose_counter | 1 |
+| prose_rus_classic | 1 |
+| prose_su_classics | 1 |
+| sci_culture | 1 |
+| sci_history | 1 |
+| sf_epic | 1 |
+| sf_etc | 1 |
+| sf_horror | 1 |
+| slavic_fantasy | 1 |
+| story | 1 |
+| unfinished | 1 |
 
 ## Top 30 authors
 
@@ -121,38 +205,49 @@ Books with at least one genre: 0 of 309 (0.0%).
 
 ## Series
 
-140 books (45.3%) belong to a series; 169 are standalone. There are 107 different series. Some of them are publisher series rather than story series.
+219 books (70.9%) belong to a series; 90 are standalone. There are 169 different series. Some of them are publisher series rather than story series.
 
-Series with more than one book (24):
+Series with more than one book (35):
 
 | Series | Books | Numbers present |
 | --- | --- | --- |
+| Реонерия | 4 | 1, 3, 3, 4 |
 | Ретро Бит | 4 | 1, 2, 5, 8 |
+| Альганна | 3 | 1, 7, 7 |
+| Ассоциация жильцов | 3 | 1, 2, 3 |
 | Без огня | 3 | 1, 2, 3 |
+| В полушаге от любви | 3 | 1, 2, 3 |
+| Велейская империя | 3 | 1, 2, 3 |
 | Матабар | 3 | 1, 2, 3 |
 | Руководство по магии для ленивых | 3 | 1, 2, 3 |
 | Струны волшебства | 3 | 1, 2, 3 |
 | Тринадцатая дочь | 3 | 1, 2, 3 |
 | Ходящие В Ночи | 3 | 1, 2, 3 |
 | Целитель магических животных | 3 | 1, 2, 4 |
-| Велейская империя | 2 | 2, 3 |
+| Ведьмы и море | 2 | 1, 2 |
 | Гостиница для магических животных | 2 | 1, 2 |
 | Дочь Скорпиона | 2 | 3, 7 |
 | Другие грабли | 2 | 1, 2 |
 | Камелия. Княжна соляных пустошей | 2 | 1, 2 |
 | Корморан Страйк | 2 | 7, 8 |
+| Кофейные истории | 2 | 16 |
+| Логры | 2 | 1, 2 |
 | Наемник | 2 | 1, 2 |
+| Некроманты и все-все-все | 2 | 1, 2 |
 | Отель потерянных душ | 2 | 1, 2 |
 | Перворожденный/Забракованные - общий мир | 2 | 1, 2 |
 | Прогресс и магия | 2 | 2, 3 |
-| Реонерия | 2 | 3, 4 |
 | Сага о Видящих | 2 | 1, 2 |
+| Сайгорос | 2 | 1, 2 |
 | Седьмая мапа | 2 | 1, 2 |
+| Система дефрагментации | 2 | 7, 9 |
 | След паука | 2 | 1, 2 |
+| Три мира Ксении Белкиной | 2 | 1, 2 |
+| Целители магических животных | 2 | 3, 5 |
 | Эльфийский бык | 2 | 2, 3 |
 | Ювелир | 2 | 1, 2 |
 
-Series with a single book: 83.
+Series with a single book: 134.
 
 ## Length distribution
 
@@ -184,13 +279,14 @@ The year is the date the book was written, as stated in the file. When that is m
 
 | Decade | Books | Share |
 | --- | --- | --- |
+| 100s | 1 | 0.3% |
 | 1900s | 2 | 0.6% |
 | 1950s | 1 | 0.3% |
-| 1960s | 2 | 0.6% |
+| 1960s | 3 | 1.0% |
 | 1970s | 3 | 1.0% |
 | 1980s | 3 | 1.0% |
-| 1990s | 9 | 2.9% |
-| 2000s | 24 | 7.8% |
+| 1990s | 10 | 3.2% |
+| 2000s | 26 | 8.4% |
 | 2010s | 63 | 20.4% |
-| 2020s | 122 | 39.5% |
-| (no year) | 80 | 25.9% |
+| 2020s | 167 | 54.0% |
+| (no year) | 30 | 9.7% |
