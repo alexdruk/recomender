@@ -38,11 +38,11 @@ Built from `data/books.db` by `src/probe-feed.js`. One daily update file from Fl
 | What | Time |
 | --- | --- |
 | Average per book | 10.6 ms |
-| Median per book | 6.8 ms |
-| Slowest book | 104.0 ms |
+| Median per book | 6.6 ms |
+| Slowest book | 115.3 ms |
 | All books, parsing only | 0.91 s |
-| Whole file, including unzip and saving | 2.12 s |
-| Speed | 34,880,335 characters of book text per second |
+| Whole file, including unzip and saving | 2.11 s |
+| Speed | 34,994,619 characters of book text per second |
 
 Parsing covers decoding the file, reading the XML, and pulling out metadata and body text.
 
@@ -120,7 +120,7 @@ A book can have several genres, so the counts add up to more than the number of 
 | sci_history | 1 | 1.2% | nonfiction |
 | sci_psychology | 1 | 1.2% | nonfiction |
 | sci_psychology_popular | 1 | 1.2% | nonfiction |
-| science-fiction | 1 | 1.2% | nonfiction |
+| science-fiction | 1 | 1.2% | fiction |
 | sf-social | 1 | 1.2% | fiction |
 | sf_detective | 1 | 1.2% | fiction |
 | sf_epic | 1 | 1.2% | fiction |
@@ -143,9 +143,9 @@ A book is fiction when it has at least one fiction genre code (science fiction, 
 | --- | --- | --- |
 | All parsed books | 86 | 100.0% |
 | Russian-language | 86 | 100.0% |
-| Fiction, any language | 74 | 86.0% |
-| **Russian-language fiction** | **74** | **86.0%** |
-| ... written in Russian | 53 | 61.6% |
+| Fiction, any language | 75 | 87.2% |
+| **Russian-language fiction** | **75** | **87.2%** |
+| ... written in Russian | 54 | 62.8% |
 | ... translated into Russian | 21 | 24.4% |
 
 ## Overlap with the archive
@@ -153,21 +153,21 @@ A book is fiction when it has at least one fiction genre code (science fiction, 
 A feed book duplicates an archive book when it has the same Flibusta id, or the same normalised author + title.
 
 - Feed books that duplicate an archive book: **0 of 86 (0.0%)**.
-- Among Russian-language fiction: 0 of 74 (0.0%).
+- Among Russian-language fiction: 0 of 75 (0.0%).
 
 ## Candidates to expect per update file
 
-After filtering to Russian-language fiction and removing books already in the archive, **this update file gives 74 candidate books** out of 86 files (86.0%).
+After filtering to Russian-language fiction and removing books already in the archive, **this update file gives 75 candidate books** out of 86 files (87.2%).
 
-The mirror listed 5 update files at the time of the probe. Their id ranges span 50 to 132 ids (this file: 102). If the other files have the same mix as this one, that means roughly **36 to 96 candidates per update file**, about 64 on average.
+The mirror listed 5 update files at the time of the probe. Their id ranges span 50 to 132 ids (this file: 102). If the other files have the same mix as this one, that means roughly **37 to 97 candidates per update file**, about 65 on average.
 
 | Update file | Ids in range | Estimated candidates |
 | --- | --- | --- |
-| f.fb2.895239-895370.zip | 132 | about 96 |
-| f.fb2.895371-895445.zip | 75 | about 54 |
-| f.fb2.895446-895495.zip | 50 | about 36 |
-| f.fb2.895496-895575.zip | 80 | about 58 |
-| f.fb2.895576-895677.zip (probed) | 102 | 74 (measured) |
+| f.fb2.895239-895370.zip | 132 | about 97 |
+| f.fb2.895371-895445.zip | 75 | about 55 |
+| f.fb2.895446-895495.zip | 50 | about 37 |
+| f.fb2.895496-895575.zip | 80 | about 59 |
+| f.fb2.895576-895677.zip (probed) | 102 | 75 (measured) |
 
 This is a measurement of one file. The number will move from day to day; a few more files are needed before trusting it to better than a factor of two.
 

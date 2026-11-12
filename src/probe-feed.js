@@ -147,6 +147,7 @@ const FICTION = new RegExp(
 
 function genreKind(g) {
   const code = String(g).toLowerCase().replace(/[-\s]+/g, '_');
+  if (/^science_fiction/.test(code)) return 'fiction'; // not "science"
   if (NONFICTION.test(code)) return 'nonfiction';
   if (FICTION.test(code)) return 'fiction';
   return 'other';
