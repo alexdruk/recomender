@@ -3,5 +3,19 @@
   "mirrors": [
     "https://flibusta.is",
     "https://flibusta.site"
+  ],
+  "pauseSeconds": 3,
+  "deleteZipAfterParse": true,
+  "catalogTables": [
+    "libbook",
+    "libavtor",
+    "libavtorname",
+    "libtranslator",
+    "libgenre",
+    "libgenrelist",
+    "libseq",
+    "libseqname",
+    "libjoinedbooks",
+    "librate"
   ]
 }

@@ -25,6 +25,13 @@ function loadConfig() {
     feedDir: path.join(dataDir, 'feed'),
     feedTextDir: path.join(dataDir, 'feed', 'text'),
     dbPath: path.join(dataDir, 'books.db'),
+    catalogPath: path.join(dataDir, 'catalog.db'),
+    sqlDir: path.join(dataDir, 'sql'),
+    pagesDir: path.join(dataDir, 'pages'),
+    genreMapPath: path.join(dataDir, 'genre-map.json'),
+    pauseSeconds: Math.max(3, Number(cfg.pauseSeconds) || 3),
+    deleteZipAfterParse: cfg.deleteZipAfterParse !== false,
+    catalogTables: cfg.catalogTables || [],
     reportsDir: path.join(ROOT, 'reports'),
   };
 }

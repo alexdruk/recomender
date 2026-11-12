@@ -89,7 +89,9 @@ async function getFeedZip(cfg) {
 
 // ---------------------------------------------------------------- parse the zip
 
-async function parseFeedZip(db, cfg, zipFile, zipName) {
+// prune = true: the feed tables describe this one zip only (the probe).
+// prune = false: rows from earlier zips are kept (the collector, fetch-feed.js).
+async function parseFeedZip(db, cfg, zipFile, zipName, prune = true) {
   const store = c.makeIngester(db, 'feed', cfg.feedTextDir);
   const entries = [];
   const results = [];
@@ -122,7 +124,7 @@ async function parseFeedZip(db, cfg, zipFile, zipName) {
   db.transaction(() => {
     // the table describes one update file: forget rows from any other zip first,
     // so a book id never clashes with an older copy
-    c.pruneParsed(db, 'feed', cfg.feedTextDir, results.map((r) => r.sourceFile));
+    if (prune) c.pruneParsed(db, 'feed', cfg.feedTextDir, results.map((r) => r.sourceFile));
     for (const r of results) {
       const s = store(r.sourceFile, r.format, r.result, r.ms);
       counts[s.status]++;
@@ -341,6 +343,13 @@ function buildReport(db) {
 async function main() {
   const cfg = c.loadConfig();
   const db = c.openDb(cfg);
+  if (c.getMeta(db, 'feed_last_id') != null) {
+    // The probe keeps only one zip in the feed tables. Once the collector has
+    // run, that would throw away collected books, so the probe steps aside.
+    console.log('Feed probe: skipped, because the feed collector (src/fetch-feed.js) is now in charge of the feed tables.');
+    db.close();
+    return;
+  }
   console.log('Feed probe: looking for the newest f.fb2.*.zip ...');
   const got = await getFeedZip(cfg);
   console.log(`  using ${got.name} (${got.how})`);
@@ -393,4 +402,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, isFiction };
+module.exports = { main, isFiction, genreKind, parseFeedZip };
