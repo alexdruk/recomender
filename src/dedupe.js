@@ -50,6 +50,10 @@ function rebuildFeed(db, cfg) {
   return rebuild(db, 'feed', 'feed_books', 'unlabeled', cfg.feedTextDir);
 }
 
+function rebuildMatched(db, cfg) {
+  return rebuild(db, 'matched', 'matched_books', 'unlabeled', cfg.matchedTextDir);
+}
+
 async function main() {
   const cfg = c.loadConfig();
   const db = c.openDb(cfg);
@@ -68,4 +72,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, rebuildArchive, rebuildFeed };
+module.exports = { main, rebuildArchive, rebuildFeed, rebuildMatched };
