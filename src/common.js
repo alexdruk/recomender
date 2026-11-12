@@ -518,7 +518,39 @@ function pruneParsed(db, source, textDir, keepFiles, formatFilter) {
   return n;
 }
 
+// ---------------------------------------------------------------- markdown helpers for the reports
+
+function mdCell(v) {
+  return String(v == null ? '' : v).replace(/\|/g, '\\|').replace(/\s+/g, ' ');
+}
+
+function mdTable(headers, rows) {
+  if (!rows.length) return '_none_\n';
+  const out = ['| ' + headers.map(mdCell).join(' | ') + ' |', '|' + headers.map(() => ' --- ').join('|') + '|'];
+  for (const r of rows) out.push('| ' + r.map(mdCell).join(' | ') + ' |');
+  return out.join('\n') + '\n';
+}
+
+function pct(part, whole) {
+  return whole ? (Math.round((part / whole) * 1000) / 10).toFixed(1) + '%' : 'n/a';
+}
+
+function num(n) {
+  return n == null ? '' : Number(n).toLocaleString('en-US');
+}
+
+function jsonList(s) {
+  if (!s) return [];
+  try {
+    const v = JSON.parse(s);
+    return Array.isArray(v) ? v : [];
+  } catch {
+    return [];
+  }
+}
+
 module.exports = {
+  mdTable, pct, num, jsonList,
   loadConfig, openDb, setMeta, getMeta, BOOK_COLUMNS,
   cleanSpaces, tidyText, countWords, countChars, normaliseText, normaliseAuthor, normKey, yearFrom, normLang,
   flibustaId, makeKey, decodeBytes, decodeZipName, safeRelPath, isJunk, extOf,
