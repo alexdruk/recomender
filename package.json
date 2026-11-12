@@ -20,7 +20,12 @@
     "genre-map": "node src/build-genre-map.js",
     "enrich": "node src/enrich.js",
     "baseline": ".venv/bin/python model/baseline.py",
-    "label": "node src/label-server.js"
+    "label": "node src/label-server.js",
+    "fetch-books": "node src/fetch-books.js",
+    "stylometry": "node src/stylometry.js",
+    "embed": ".venv/bin/python model/embed.py",
+    "fingerprints": "node src/fetch-books.js && node src/stylometry.js && .venv/bin/python model/embed.py && .venv/bin/python model/fingerprints.py",
+    "fingerprints-report": ".venv/bin/python model/fingerprints.py"
   },
   "dependencies": {
     "better-sqlite3": "^13.1.1",
