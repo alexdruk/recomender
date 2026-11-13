@@ -268,7 +268,8 @@ def main():
         lambda j: cut_chunks(opening_of(j[2].read_text(encoding="utf-8")), n), lambda j: EMB_OPEN / j[0] / f"{j[1]}.npy")
 
     cj = comment_jobs()
-    run("Reader comments", cj, len(cj), lambda j: j[1], lambda j: EMB_COMMENTS / f"{j[0]}.npy")
+    done = len(list(EMB_COMMENTS.glob("*.npy"))) if EMB_COMMENTS.exists() else 0
+    run("Reader comments", cj, len(cj) + done, lambda j: j[1], lambda j: EMB_COMMENTS / f"{j[0]}.npy")
 
 
 if __name__ == "__main__":
