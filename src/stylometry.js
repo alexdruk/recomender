@@ -8,6 +8,10 @@
 // otherwise) and of every book in the view "unlabeled_books", and fills the
 // table "stylometry" (key, kind, text_source, bytes, features as JSON).
 // A book whose text file did not change is not measured again.
+//
+// Milestone 3c, part E: the same numbers are measured a second time on the
+// opening only (the first 25,000 words, about 100 pages) and stored in the
+// table "stylometry_opening". Books I marked "read it" (kind = extra) are included.
 
 const fs = require('node:fs');
 const path = require('node:path');
@@ -16,6 +20,7 @@ const c = require('./common');
 const WORD = /[\p{L}\p{N}]+(?:[-'’][\p{L}\p{N}]+)*/gu;
 const SAMPLE = 5000; // words in one vocabulary sample
 const SAMPLES = 5; // samples spread evenly through the book
+const OPENING_WORDS = 25000; // about 100 pages: where I usually decide whether I like a book
 
 const set = (s) => new Set(s.split(/\s+/).filter(Boolean));
 const FIRST_PERSON = set('я меня мне мной мною мой моя мое мои моего моей моему моим моих мою моем моими');
@@ -145,6 +150,20 @@ function measure(text) {
   return f;
 }
 
+// The opening of a book: everything up to the end of the paragraph that holds word number 25,000.
+function openingOf(text, words = OPENING_WORDS) {
+  const re = new RegExp(WORD.source, 'gu');
+  let n = 0;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (++n >= words) {
+      const end = text.indexOf('\n', re.lastIndex);
+      return end === -1 ? text : text.slice(0, end + 1);
+    }
+  }
+  return text;
+}
+
 // Where the text of each book lives. Liked books: FB2 text first, EPUB text as a fallback.
 function listTexts(db, cfg) {
   const out = [];
@@ -160,6 +179,12 @@ function listTexts(db, cfg) {
       out.push({ key: r.key, kind: 'unlabeled', source: r.store, file: path.join(dirs[r.store], r.key + '.txt') });
     }
   }
+  const extra = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'extra_books'").get();
+  if (extra) {
+    for (const r of db.prepare("SELECT key FROM extra_books WHERE parse_status != 'failed'").all()) {
+      out.push({ key: r.key, kind: 'extra', source: 'extra', file: path.join(cfg.extraTextDir, r.key + '.txt') });
+    }
+  }
   return out;
 }
 
@@ -167,31 +192,37 @@ async function main() {
   const cfg = c.loadConfig();
   const db = c.openDb(cfg);
   db.pragma('busy_timeout = 10000');
-  db.exec(`CREATE TABLE IF NOT EXISTS stylometry (
-    key TEXT NOT NULL, kind TEXT NOT NULL, text_source TEXT, bytes INTEGER, features TEXT,
-    PRIMARY KEY (key, kind))`);
+  const texts = listTexts(db, cfg);
   c.setMeta(db, 'stylometry_features', FEATURES.map(([name, what]) => ({ name, what })));
-  const have = new Map(db.prepare('SELECT key, kind, text_source, bytes FROM stylometry').all().map((r) => [`${r.kind}/${r.key}`, r]));
-  const put = db.prepare(`INSERT INTO stylometry (key, kind, text_source, bytes, features) VALUES (?, ?, ?, ?, ?)
-    ON CONFLICT (key, kind) DO UPDATE SET text_source = excluded.text_source, bytes = excluded.bytes, features = excluded.features`);
-  let measured = 0, kept = 0, missing = 0, tooShort = 0;
-  for (const t of listTexts(db, cfg)) {
-    if (!fs.existsSync(t.file)) {
-      missing++;
-      continue;
+  c.setMeta(db, 'opening_words', OPENING_WORDS);
+  // the whole book, then the opening only
+  for (const [table, cut, name] of [['stylometry', null, 'Stylometry'], ['stylometry_opening', openingOf, `Stylometry of the opening (first ${OPENING_WORDS} words)`]]) {
+    db.exec(`CREATE TABLE IF NOT EXISTS ${table} (
+      key TEXT NOT NULL, kind TEXT NOT NULL, text_source TEXT, bytes INTEGER, features TEXT,
+      PRIMARY KEY (key, kind))`);
+    const have = new Map(db.prepare(`SELECT key, kind, text_source, bytes FROM ${table}`).all().map((r) => [`${r.kind}/${r.key}`, r]));
+    const put = db.prepare(`INSERT INTO ${table} (key, kind, text_source, bytes, features) VALUES (?, ?, ?, ?, ?)
+      ON CONFLICT (key, kind) DO UPDATE SET text_source = excluded.text_source, bytes = excluded.bytes, features = excluded.features`);
+    let measured = 0, kept = 0, missing = 0, tooShort = 0;
+    for (const t of texts) {
+      if (!fs.existsSync(t.file)) {
+        missing++;
+        continue;
+      }
+      const bytes = fs.statSync(t.file).size;
+      const old = have.get(`${t.kind}/${t.key}`);
+      if (old && old.text_source === t.source && old.bytes === bytes) {
+        kept++;
+        continue;
+      }
+      const text = fs.readFileSync(t.file, 'utf8');
+      const f = measure(cut ? cut(text) : text);
+      if (!f) tooShort++;
+      put.run(t.key, t.kind, t.source, bytes, f ? JSON.stringify(f) : null);
+      measured++;
     }
-    const bytes = fs.statSync(t.file).size;
-    const old = have.get(`${t.kind}/${t.key}`);
-    if (old && old.text_source === t.source && old.bytes === bytes) {
-      kept++;
-      continue;
-    }
-    const f = measure(fs.readFileSync(t.file, 'utf8'));
-    if (!f) tooShort++;
-    put.run(t.key, t.kind, t.source, bytes, f ? JSON.stringify(f) : null);
-    measured++;
+    console.log(`${name}: ${measured} books measured, ${kept} unchanged, ${missing} without a text file, ${tooShort} too short to measure. ${FEATURES.length} numbers per book.`);
   }
-  console.log(`Stylometry: ${measured} books measured, ${kept} unchanged, ${missing} without a text file, ${tooShort} too short to measure. ${FEATURES.length} numbers per book.`);
   db.close();
 }
 
@@ -202,4 +233,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, measure, listTexts, FEATURES };
+module.exports = { main, measure, listTexts, openingOf, FEATURES, OPENING_WORDS };

@@ -28,6 +28,7 @@ function loadConfig() {
     likedFb2TextDir: path.join(dataDir, 'text-fb2'), // liked books, text from the FB2 file
     matchedTextDir: path.join(dataDir, 'matched', 'text'),
     ratedTextDir: path.join(dataDir, 'rated', 'text'), // new downloads for the rated-matched set
+    extraTextDir: path.join(dataDir, 'extra', 'text'), // books I marked "read it" on the labelling page
     dbPath: path.join(dataDir, 'books.db'),
     catalogPath: path.join(dataDir, 'catalog.db'),
     sqlDir: path.join(dataDir, 'sql'),

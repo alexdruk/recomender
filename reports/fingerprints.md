@@ -145,19 +145,20 @@ Positive = liked books. Each model is trained and tested twice: once against the
 
 Embeddings: 50 PCA directions, learned inside each training fold. Test: author-grouped, 5 folds, 10 repeats (50 test folds); an author is never on both sides. Every scale, the model's penalty strength and the list of like-minded readers are also found inside the training fold only.
 
-| Model | **Rated-matched: ROC AUC** | Rated-matched: median percentile of a liked book | Rated-matched: liked books in the top 5% | Old matched: ROC AUC | Old matched: liked books in the top 5% |
-| --- | --- | --- | --- | --- | --- |
-| r: average rating + number of votes | **0.671 ± 0.053** | 24.0% ± 6.4 | 15.1% ± 6.2 | 0.958 ± 0.013 | 76.6% ± 7.3 |
-| rb: r + genres, length, translated, series | **0.723 ± 0.042** | 17.7% ± 4.7 | 17.5% ± 8.1 | 0.962 ± 0.012 | 79.8% ± 7.3 |
-| rb+text: rb + stylometry + embeddings | **0.719 ± 0.033** | 20.6% ± 5.3 | 16.2% ± 6.2 | 0.959 ± 0.012 | 77.5% ± 8.2 |
-| lm: like-minded readers score alone | **0.713 ± 0.047** | 19.0% ± 6.9 | 21.7% ± 8.9 | 0.924 ± 0.022 | 66.1% ± 10.3 |
-| lm+rb: like-minded readers + rb | **0.743 ± 0.041** | 15.6% ± 5.5 | 22.9% ± 10.3 | 0.964 ± 0.011 | 80.1% ± 7.3 |
-| lm+rb+text: like-minded readers + rb+text | **0.739 ± 0.034** | 18.1% ± 5.5 | 21.4% ± 7.4 | 0.964 ± 0.011 | 82.0% ± 6.9 |
-| b0: genres + length, translated, series (no ratings) | **0.660 ± 0.049** | 27.1% ± 8.0 | 15.4% ± 6.5 | 0.723 ± 0.042 | 21.7% ± 8.3 |
-| s: b0 + stylometry | **0.664 ± 0.049** | 27.7% ± 7.4 | 13.0% ± 6.0 | 0.768 ± 0.039 | 26.0% ± 8.5 |
-| e: embeddings only | **0.659 ± 0.037** | 28.0% ± 5.7 | 13.1% ± 4.8 | 0.778 ± 0.035 | 30.0% ± 6.9 |
-| be: b0 + embeddings | **0.675 ± 0.039** | 26.6% ± 4.7 | 12.9% ± 5.4 | 0.791 ± 0.034 | 31.1% ± 7.5 |
-| all: b0 + stylometry + embeddings | **0.679 ± 0.037** | 25.3% ± 5.0 | 12.4% ± 5.2 | 0.802 ± 0.033 | 33.9% ± 9.9 |
+| Model | **Rated-matched: ROC AUC** | Rated-matched: median percentile of a liked book | Rated-matched: liked books in the top 5% | Old matched: ROC AUC | Old matched: liked books in the top 5% | AUC liked vs "would never read" |
+| --- | --- | --- | --- | --- | --- | --- |
+| r: average rating + number of votes | **0.671 ± 0.053** | 24.0% ± 6.4 | 15.1% ± 6.2 | 0.958 ± 0.013 | 76.6% ± 7.3 | 0.702 ± 0.006 |
+| rb: r + genres, length, translated, series | **0.723 ± 0.042** | 17.7% ± 4.7 | 17.5% ± 8.1 | 0.962 ± 0.012 | 79.8% ± 7.3 | 0.746 ± 0.008 |
+| rb+text: rb + stylometry + embeddings | **0.719 ± 0.033** | 20.6% ± 5.3 | 16.2% ± 6.2 | 0.959 ± 0.012 | 77.5% ± 8.2 | 0.750 ± 0.011 |
+| lm: like-minded readers score alone | **0.713 ± 0.047** | 19.0% ± 6.9 | 21.7% ± 8.9 | 0.924 ± 0.022 | 66.1% ± 10.3 | 0.733 ± 0.007 |
+| lm+rb: like-minded readers + rb | **0.743 ± 0.041** | 15.6% ± 5.5 | 22.9% ± 10.3 | 0.964 ± 0.011 | 80.1% ± 7.3 | 0.765 ± 0.009 |
+| lm+rb+text: like-minded readers + rb+text | **0.739 ± 0.034** | 18.1% ± 5.5 | 21.4% ± 7.4 | 0.964 ± 0.011 | 82.0% ± 6.9 | 0.767 ± 0.010 |
+| b0: genres + length, translated, series (no ratings) | **0.660 ± 0.049** | 27.1% ± 8.0 | 15.4% ± 6.5 | 0.723 ± 0.042 | 21.7% ± 8.3 | 0.668 ± 0.014 |
+| s: b0 + stylometry | **0.664 ± 0.049** | 27.7% ± 7.4 | 13.0% ± 6.0 | 0.768 ± 0.039 | 26.0% ± 8.5 | 0.679 ± 0.008 |
+| e: embeddings only | **0.659 ± 0.037** | 28.0% ± 5.7 | 13.1% ± 4.8 | 0.778 ± 0.035 | 30.0% ± 6.9 | 0.681 ± 0.010 |
+| be: b0 + embeddings | **0.675 ± 0.039** | 26.6% ± 4.7 | 12.9% ± 5.4 | 0.791 ± 0.034 | 31.1% ± 7.5 | 0.701 ± 0.010 |
+| all: b0 + stylometry + embeddings | **0.679 ± 0.037** | 25.3% ± 5.0 | 12.4% ± 5.2 | 0.802 ± 0.033 | 33.9% ± 9.9 | 0.714 ± 0.011 |
+| all+labels: all, with my answers | **0.680 ± 0.036** | 25.5% ± 4.7 | 12.1% ± 4.9 | 0.802 ± 0.033 | 34.0% ± 9.7 | 0.719 ± 0.010 |
 
 How to read the numbers:
 
@@ -165,6 +166,8 @@ How to read the numbers:
 - **Median percentile**: each liked test book is placed in the ranking of the comparison test books. 10% means the typical liked book sits in the top tenth of the pile; 50% would be pure chance. Lower is better.
 - **Top 5%**: the share of liked test books that score higher than 95% of the comparison test books. Chance gives 5%.
 - **The rated-matched columns are the ones that count.** On the old matched set the rating does most of the work, because that set is full of books with few votes or low averages. On the rated-matched set the average rating was matched away on purpose, so model r can only use the number of votes.
+
+- **AUC liked vs "would never read"**: how well the score (trained against the rated-matched set) separates liked books from the books I marked "would never read" (scores from the author-grouped test; ± is over the repeats). This is the cleanest number, because both sides are real answers.
 
 ### Does one model really beat another?
 
@@ -180,6 +183,7 @@ Each row compares two models fold by fold on the same 50 folds, which removes mo
 | lm+rb+text against rb+text | like-minded readers on top of rb+text | +0.020 ± 0.015 (better in 47 of 50 folds) | yes, more than the noise | +0.005 ± 0.005 (better in 42 of 50 folds) |
 | lm+rb+text against lm+rb | text on top of like-minded readers + rb | -0.004 ± 0.026 (better in 22 of 50 folds) | no, inside the noise | -0.000 ± 0.005 (better in 26 of 50 folds) |
 | all against b0 | text on top of genres, with no ratings at all | +0.019 ± 0.038 (better in 34 of 50 folds) | no, inside the noise | +0.079 ± 0.037 (better in 48 of 50 folds) |
+| all+labels against all | my answers on top of model all | +0.001 ± 0.009 (better in 25 of 50 folds) | no, inside the noise | -0.000 ± 0.001 (better in 20 of 50 folds) |
 
 ### Does text add anything beyond ratings and genres?
 
@@ -208,15 +212,38 @@ Model all uses no ratings, so its rows show how well taste in text and genre car
 
 ## My answers from the labelling page
 
-Answers so far: **0** (0 would never read, 0 maybe, 0 want to read). Starred favourites: 0.
+Answers so far: **100** (58 would never read, 37 maybe, 5 want to read). Starred favourites: 0.
 
 The page now shows the average rating and the number of votes on each card. Books with an average of 3 or more and at least 5 votes come first, and among those the rated-matched books come before the others.
 
-> **Fewer than 100 answers, so the label step is skipped**: no "liked vs would never read" metric, no all+labels model, and nothing is removed from the lists below. Start the page with `npm run label`, answer some more, and run the report again.
+There are at least 100 answers, so they are used: the extra column "liked vs would never read" for every model in the table above, and the extra model **all+labels** (model all, where "would never read" books count 3 times as negatives, starred books count 2 times as positives, and "want to read" books are not used as negatives). Books I already answered are left out of the two lists below.
 
 ### Genre groups: "would never read" against liked
 
-No "would never read" answers yet, so this table is empty.
+| Genre group | Never: books | Never: share | Liked: books | Liked: share | Difference (points) |
+| --- | --- | --- | --- | --- | --- |
+| contemporary romance | 8 | 13.8% | 8 | 2.7% | +11.1 |
+| popadantsy | 12 | 20.7% | 34 | 11.6% | +9.1 |
+| contemporary prose | 8 | 13.8% | 21 | 7.1% | +6.7 |
+| web literature | 26 | 44.8% | 118 | 40.1% | +4.7 |
+| historical | 3 | 5.2% | 8 | 2.7% | +2.5 |
+| adventure | 3 | 5.2% | 8 | 2.7% | +2.5 |
+| horror and mystic | 2 | 3.4% | 3 | 1.0% | +2.4 |
+| erotica | 2 | 3.4% | 4 | 1.4% | +2.1 |
+| children | 1 | 1.7% | 0 | 0.0% | +1.7 |
+| thriller | 2 | 3.4% | 8 | 2.7% | +0.7 |
+| war prose | 1 | 1.7% | 3 | 1.0% | +0.7 |
+| detective | 8 | 13.8% | 40 | 13.6% | +0.2 |
+| litrpg | 1 | 1.7% | 5 | 1.7% | +0.0 |
+| boyar-anime | 1 | 1.7% | 5 | 1.7% | +0.0 |
+| other | 0 | 0.0% | 1 | 0.3% | -0.3 |
+| classic prose | 0 | 0.0% | 2 | 0.7% | -0.7 |
+| alternative history | 1 | 1.7% | 8 | 2.7% | -1.0 |
+| fan translation | 1 | 1.7% | 8 | 2.7% | -1.0 |
+| humour | 3 | 5.2% | 23 | 7.8% | -2.7 |
+| science fiction | 7 | 12.1% | 46 | 15.6% | -3.6 |
+| fantasy | 12 | 20.7% | 79 | 26.9% | -6.2 |
+| romantic fantasy | 9 | 15.5% | 124 | 42.2% | -26.7 |
 
 ## Taste map: clusters of the liked books
 
@@ -314,23 +341,19 @@ Scored by the model with the best ROC AUC on the rated-matched set, **lm+rb**. 1
 | 0.91 | 4.44 | 55 | 819499 | Ольга Ярошинская | На пересдачу, Кэсси Рок! Четвертая попытка | love_sf, magic_school | rated-matched |
 | 0.90 | 4.25 | 64 | 741494 | Татьяна Владимировна Солодкова | Душа королевского замка | love_sf, network_literature | rated-matched |
 | 0.89 | 4.12 | 118 | 546689 | Дана Арнаутова | Стальной подснежник | love_sf | rated-matched |
-| 0.89 | 3.42 | 62 | 534396 | Ника Ёрш | Замуж за варвара, или Монашка на выданье | love_sf | rated-matched |
 | 0.89 | 4.33 | 51 | 575529 | Кира Алиевна Измайлова | Старое платье королевы | love_sf | rated-matched |
 | 0.89 | 3.66 | 86 | 612428 | Оксана Чекменёва | Целительница моей души | love_sf, network_literature, sf_fantasy_city, everyday_fantasy | rated-matched |
 | 0.88 | 3.64 | 42 | 815015 | Ива Лебедева, Ирина Владимировна Смирнова | В моем счастье прошу винить амнезию | sf_humor, love_sf | rated-matched |
 | 0.88 | 4.14 | 73 | 789434 | Яна Ясная | Секс и ничего личного | love_sf, love_erotica, network_literature | rated-matched |
 | 0.88 | 3.87 | 62 | 687368 | Марианна Красовская | Дух воина | love_sf | rated-matched |
 | 0.88 | 4.32 | 47 | 712101 | Маргарита Александровна Гришаева | Приворот на василиска | love_sf, love_short | rated-matched |
-| 0.87 | 3.92 | 25 | 772259 | Полина Ром | Метаморфозы Катрин | love_sf, everyday_fantasy | rated-matched |
 | 0.86 | 3.59 | 66 | 458017 | Дарья Андреевна Кузнецова | Кошачья гордость, волчья честь | love_sf | rated-matched |
 | 0.86 | 3.58 | 103 | 602417 | Нинель Мягкова | Отборная бабушка | love_sf, humor, network_literature, everyday_fantasy, popadancy | rated-matched |
 | 0.85 | 4.57 | 562 | 173033 | Ольга Громыко | Верховная Ведьма | sf_fantasy, sf_humor | rated-matched |
 | 0.84 | 4.07 | 29 | 702822 | Ольга Ярошинская | Огня для мисс Уокер! | sf_detective, love_sf | rated-matched |
-| 0.84 | 4.50 | 175 | 161248 | Марина и Сергей Дяченко | Ритуал | sf_fantasy | rated-matched |
 | 0.84 | 4.03 | 34 | 681627 | Екатерина Сергеевна Бакулина | Мой покойный муж | love_sf, network_literature | rated-matched |
 | 0.84 | 4.40 | 208 | 302744 | Оксана Петровна Панкеева | О пользе проклятий | love_sf | rated-matched |
 | 0.84 | 4.32 | 340 | 150905 | Ольга Громыко | Год Крысы. Видунья | sf_fantasy | rated-matched |
-| 0.83 | 3.96 | 50 | 540277 | Купава Огинская | Морра | love_sf | rated-matched |
 | 0.83 | 4.29 | 344 | 320453 | Виталий Валерьевич Зыков | Под знаменем пророчества | sf_fantasy | rated-matched |
 | 0.83 | 4.03 | 59 | 619223 | Яна Лисканова | План по соблазнению герцога (СИ) | love_sf, sf_humor, network_literature | rated-matched |
 | 0.82 | 3.66 | 149 | 620295 | Дмитрий Олегович Смекалин | Господин маг | sf_heroic, sf_technofantasy | rated-matched |
@@ -338,8 +361,12 @@ Scored by the model with the best ROC AUC on the rated-matched set, **lm+rb**. 1
 | 0.82 | 3.95 | 58 | 564647 | Алиса Чернышова | Истинная пара для дракона, или Просто полетели домой (СИ) | love_sf, network_literature | rated-matched |
 | 0.81 | 3.99 | 119 | 348068 | Елена Звездная | Дочь воина, или Кадеты не сдаются | love_sf | rated-matched |
 | 0.80 | 4.10 | 60 | 458349 | Елена Звездная | Урок седьмой: Опасность кровного наследия | love_sf, magic_school | rated-matched |
-| 0.80 | 3.33 | 27 | 692052 | Ольга Вадимовна Гусейнова | Позволь мне согреться | love_sf, network_literature | rated-matched |
 | 0.80 | 4.00 | 53 | 435620 | Анна Сергеевна Гаврилова | Шустрое счастье, или Охота на маленького дракона | love_sf | rated-matched |
+| 0.80 | 4.06 | 48 | 519828 | Александра Лисина | Беглянка | love_sf | rated-matched |
+| 0.79 | 3.83 | 52 | 603576 | Кристина Леола | Честная сделка | sf_humor, love_sf, network_literature | rated-matched |
+| 0.79 | 3.00 | 17 | 710765 | Терин Рем | Мужская вакансия, или Женщина на борту — к несчастью | love_sf | rated-matched |
+| 0.79 | 3.99 | 72 | 648543 | Анна Орлова | Овсянка, мэм! | sf_detective, det_irony | rated-matched |
+| 0.79 | 3.99 | 77 | 435253 | Наталья Сергеевна Жильцова, Азалия Еремеева | Академия магического права. Брюнетка в защите | love_sf | rated-matched |
 
 ### Early: fewer than 5 votes
 

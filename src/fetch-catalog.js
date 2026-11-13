@@ -25,6 +25,7 @@ const INDEXES = {
   libseqname: ['SeqId'],
   librate: ['BookId'],
   libjoinedbooks: ['BadId'],
+  reviews: ['BookId'],
 };
 
 // ---------------------------------------------------------------- MySQL dump reading

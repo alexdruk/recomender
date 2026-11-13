@@ -15,6 +15,14 @@ Sets:  liked_fb2   - liked books, text from the downloaded FB2 file
                      liked books for the FB2-vs-EPUB check
        feed, matched, rated - the unlabeled books (rated = new downloads for the rated-matched set)
 
+       extra       - books I marked "read it" on the labelling page
+
+Milestone 3c adds two more kinds of vectors, made in the same run:
+  data/emb-open/<set>/<key>.npy   the opening only: the same number of chunks, spread
+                                  evenly through the first 25,000 words (about 100 pages)
+  data/emb-comments/<key>.npy     reader comments from the catalog: one vector per comment,
+                                  the newest 30 comments of the book (each cut like a chunk)
+
 Resumable: a book whose .npy file exists is skipped, so the script can be
 stopped and started again at any time.
 """
@@ -22,6 +30,7 @@ stopped and started again at any time.
 import argparse
 import json
 import random
+import re
 import sqlite3
 import sys
 import time
@@ -33,7 +42,11 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 DATA = ROOT / CONFIG.get("dataDir", "data")
 DB_PATH = DATA / "books.db"
+CAT_PATH = DATA / "catalog.db"
+INDEX_PATH = DATA / "index.db"
 EMB = DATA / "emb"
+EMB_OPEN = DATA / "emb-open"
+EMB_COMMENTS = DATA / "emb-comments"
 SETTINGS = EMB / "settings.json"
 
 MODEL = "BAAI/bge-m3"
@@ -45,6 +58,9 @@ BUDGET_SECONDS = 2.5 * 3600  # aim under 3 hours, with some room to spare
 EPUB_CHECK_BOOKS = 30
 SEED = 20261112
 BATCH = 16
+OPENING_WORDS = 25000  # the same number as in src/stylometry.js
+MAX_COMMENTS = 30  # the newest comments of a book that are embedded
+WORD = re.compile(r"[^\W_]+(?:[-'’][^\W_]+)*")
 
 
 def text_dirs():
@@ -54,6 +70,7 @@ def text_dirs():
         "feed": DATA / "feed" / "text",
         "matched": DATA / "matched" / "text",
         "rated": DATA / "rated" / "text",
+        "extra": DATA / "extra" / "text",
     }
 
 
@@ -91,6 +108,11 @@ def list_jobs():
             path = dirs[store] / f"{key}.txt"
             if path.exists():
                 jobs.append((store, key, path))
+    if db.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'extra_books'").fetchone():
+        for (key,) in db.execute("SELECT key FROM extra_books WHERE parse_status != 'failed' ORDER BY key"):
+            path = dirs["extra"] / f"{key}.txt"
+            if path.exists():
+                jobs.append(("extra", key, path))
     expected = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'matched_pick'").fetchone()[0]
     picked = db.execute("SELECT COUNT(*) FROM matched_pick").fetchone()[0] if expected else 0
     db.close()
@@ -113,6 +135,53 @@ def cut_chunks(text, n):
             pos = nl + 1
         chunks.append(text[pos:pos + CHUNK_CHARS])
     return chunks
+
+
+def opening_of(text, words=OPENING_WORDS):
+    """Everything up to the end of the paragraph that holds word number 25,000."""
+    n = 0
+    for m in WORD.finditer(text):
+        n += 1
+        if n >= words:
+            end = text.find("\n", m.end())
+            return text if end == -1 else text[:end + 1]
+    return text
+
+
+def comment_jobs():
+    """(key, newest comments) for every book of mine that has reader comments and no comment vectors yet.
+    Comments left on an older copy of a book count for the book, as on the site."""
+    if not INDEX_PATH.exists() or not CAT_PATH.exists():
+        return []
+    db = sqlite3.connect(DB_PATH, timeout=30)
+    if not db.execute("SELECT 1 FROM sqlite_master WHERE name = 'book_facts'").fetchone():
+        db.close()
+        return []
+    todo = [(k, c) for k, c in db.execute("SELECT key, cat_id FROM book_facts WHERE comments > 0 AND cat_id IS NOT NULL ORDER BY key")
+            if not (EMB_COMMENTS / f"{k}.npy").exists()]
+    db.close()
+    cat = sqlite3.connect(f"file:{CAT_PATH}?mode=ro", uri=True)
+    if not cat.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'reviews'").fetchone():
+        cat.close()
+        return []
+    ix = sqlite3.connect(f"file:{INDEX_PATH}?mode=ro", uri=True)
+    jobs = []
+    for key, cat_id in todo:
+        ids = [cat_id] + [r[0] for r in ix.execute("SELECT id FROM alias WHERE root = ?", (cat_id,))]
+        sql = f"SELECT Text FROM reviews WHERE BookId IN ({','.join('?' * len(ids))}) ORDER BY Time DESC"
+        texts = [t.strip()[:CHUNK_CHARS] for (t,) in cat.execute(sql, ids) if t and t.strip()][:MAX_COMMENTS]
+        if texts:
+            jobs.append((key, texts))
+    cat.close()
+    ix.close()
+    return jobs
+
+
+def save(out, vectors):
+    out.parent.mkdir(parents=True, exist_ok=True)
+    tmp = out.with_suffix(".tmp.npy")
+    np.save(tmp, vectors.astype(np.float16))
+    tmp.replace(out)  # a half-written file never looks finished
 
 
 def load_model():
@@ -176,21 +245,30 @@ def main():
         SETTINGS.write_text(json.dumps(settings, indent=2) + "\n")
     n = settings["chunks"]
 
-    todo = [(s, k, p) for s, k, p in jobs if not (EMB / s / f"{k}.npy").exists()]
-    print(f"Chunks per book: {n}. Books to embed now: {len(todo)} (already done: {len(jobs) - len(todo)}).", flush=True)
-    t0 = time.time()
-    for i, (set_name, key, path) in enumerate(todo, 1):
-        chunks = cut_chunks(path.read_text(encoding="utf-8"), n)
-        vectors = embed(model, chunks)
-        out = EMB / set_name / f"{key}.npy"
-        out.parent.mkdir(parents=True, exist_ok=True)
-        tmp = out.with_suffix(".tmp.npy")
-        np.save(tmp, vectors.astype(np.float16))
-        tmp.replace(out)  # a half-written file never looks finished
-        if i % 50 == 0 or i == len(todo):
-            spent = time.time() - t0
-            print(f"  {i} of {len(todo)} books, {spent / 60:.1f} min spent, about {spent / i * (len(todo) - i) / 60:.0f} min left", flush=True)
-    print(f"Embeddings done: {len(todo)} books embedded in {(time.time() - t0) / 60:.1f} minutes.")
+    def run(name, todo, total, make_chunks, out_path):
+        print(f"{name}: {len(todo)} books to embed now (already done: {total - len(todo)}).", flush=True)
+        t0 = time.time()
+        for i, job in enumerate(todo, 1):
+            save(out_path(job), embed(model, make_chunks(job)))
+            if i % 50 == 0 or i == len(todo):
+                spent = time.time() - t0
+                print(f"  {i} of {len(todo)} books, {spent / 60:.1f} min spent, about {spent / i * (len(todo) - i) / 60:.0f} min left", flush=True)
+        if todo:
+            print(f"{name} done: {len(todo)} books embedded in {(time.time() - t0) / 60:.1f} minutes.", flush=True)
+
+    print(f"Chunks per book: {n}.")
+    todo = [j for j in jobs if not (EMB / j[0] / f"{j[1]}.npy").exists()]
+    run("Whole books", todo, len(jobs), lambda j: cut_chunks(j[2].read_text(encoding="utf-8"), n), lambda j: EMB / j[0] / f"{j[1]}.npy")
+
+    # the opening only; a liked book is embedded once, from its FB2 text when there is one
+    has_fb2 = {k for s, k, _ in jobs if s == "liked_fb2"}
+    first = [j for j in jobs if not (j[0] == "liked_epub" and j[1] in has_fb2)]
+    todo = [j for j in first if not (EMB_OPEN / j[0] / f"{j[1]}.npy").exists()]
+    run(f"Openings (first {OPENING_WORDS} words)", todo, len(first),
+        lambda j: cut_chunks(opening_of(j[2].read_text(encoding="utf-8")), n), lambda j: EMB_OPEN / j[0] / f"{j[1]}.npy")
+
+    cj = comment_jobs()
+    run("Reader comments", cj, len(cj), lambda j: j[1], lambda j: EMB_COMMENTS / f"{j[0]}.npy")
 
 
 if __name__ == "__main__":

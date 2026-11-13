@@ -16,6 +16,7 @@
     "libseq",
     "libseqname",
     "libjoinedbooks",
-    "librate"
+    "librate",
+    "reviews"
   ]
 }
