@@ -13,7 +13,7 @@ data/emb/<set>/<key>.npy (N rows of 1024 numbers); the book vector is their mean
 Sets:  liked_fb2   - liked books, text from the downloaded FB2 file
        liked_epub  - liked books without an FB2 file, plus the EPUB text of 30
                      liked books for the FB2-vs-EPUB check
-       feed, matched - the unlabeled books
+       feed, matched, rated - the unlabeled books (rated = new downloads for the rated-matched set)
 
 Resumable: a book whose .npy file exists is skipped, so the script can be
 stopped and started again at any time.
@@ -53,6 +53,7 @@ def text_dirs():
         "liked_epub": DATA / "text",
         "feed": DATA / "feed" / "text",
         "matched": DATA / "matched" / "text",
+        "rated": DATA / "rated" / "text",
     }
 
 
@@ -86,10 +87,10 @@ def list_jobs():
         jobs.append(("liked_epub", key, dirs["liked_epub"] / f"{key}.txt"))
     has_view = db.execute("SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'unlabeled_books'").fetchone()
     if has_view:
-        for key, source in db.execute("SELECT key, source FROM unlabeled_books ORDER BY key"):
-            path = dirs[source] / f"{key}.txt"
+        for key, store in db.execute("SELECT key, store FROM unlabeled_books ORDER BY key"):
+            path = dirs[store] / f"{key}.txt"
             if path.exists():
-                jobs.append((source, key, path))
+                jobs.append((store, key, path))
     expected = db.execute("SELECT COUNT(*) FROM sqlite_master WHERE name = 'matched_pick'").fetchone()[0]
     picked = db.execute("SELECT COUNT(*) FROM matched_pick").fetchone()[0] if expected else 0
     db.close()

@@ -27,6 +27,7 @@ function loadConfig() {
     fb2Dir: path.join(dataDir, 'fb2'), // cache of downloaded .fb2.zip files
     likedFb2TextDir: path.join(dataDir, 'text-fb2'), // liked books, text from the FB2 file
     matchedTextDir: path.join(dataDir, 'matched', 'text'),
+    ratedTextDir: path.join(dataDir, 'rated', 'text'), // new downloads for the rated-matched set
     dbPath: path.join(dataDir, 'books.db'),
     catalogPath: path.join(dataDir, 'catalog.db'),
     sqlDir: path.join(dataDir, 'sql'),
@@ -104,6 +105,10 @@ function openDb(cfg) {
     CREATE TABLE IF NOT EXISTS feed_books (${BOOK_COLUMNS});
     -- milestone 3: random catalog books with the same year spread as the liked books
     CREATE TABLE IF NOT EXISTS matched_books (${BOOK_COLUMNS});
+    -- milestone 3b: the rated-matched comparison set. "rated_pick" lists every book of the set;
+    -- reused = 1 means the book is already in matched_books, the others are in rated_books
+    CREATE TABLE IF NOT EXISTS rated_books (${BOOK_COLUMNS});
+    CREATE TABLE IF NOT EXISTS rated_pick (id INTEGER PRIMARY KEY, year INTEGER, bin REAL, pos INTEGER, reused INTEGER);
     -- milestone 3: my answers from the labelling page (label: never / maybe / want)
     CREATE TABLE IF NOT EXISTS labels (
       key TEXT PRIMARY KEY,

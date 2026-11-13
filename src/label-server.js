@@ -3,8 +3,11 @@
 //
 //   node src/label-server.js      then open http://localhost:3000
 //
-// Tab "New books": one unlabeled book at a time, in random order, from the
-// view "unlabeled_books" (feed books and matched background books together).
+// Tab "New books": one unlabeled book at a time from the view "unlabeled_books"
+// (feed, matched and rated-matched books together). Each card shows the average
+// reader rating and the number of votes. Queue order: books with an average of
+// 3 or more and at least 5 votes come first, and among those the rated-matched
+// books come before the others; inside each group the order is random.
 // Answers go into the table "labels" (key, label, time). A book that has an
 // answer is never shown again. Books downloaded while the page is open join
 // the queue by themselves, because every "next book" is a fresh database query.
@@ -21,6 +24,10 @@ const LABELS = new Set(['never', 'maybe', 'want']);
 const cfg = c.loadConfig();
 const db = c.openDb(cfg);
 db.pragma('busy_timeout = 10000'); // the downloader may be writing at the same time
+
+db.exec('CREATE TABLE IF NOT EXISTS book_ratings (key TEXT PRIMARY KEY, n INTEGER, avg REAL)'); // filled by fetch-books.js
+
+const WITH_RATING = 'SELECT u.*, COALESCE(r.n, 0) AS votes, r.avg AS rating FROM unlabeled_books u LEFT JOIN book_ratings r ON r.key = u.key';
 
 function hasPool() {
   return !!db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'unlabeled_books'").get();
@@ -43,6 +50,8 @@ function card(row) {
     words: row.words || 0,
     annotation: row.annotation || '',
     source: row.source,
+    votes: row.votes || 0,
+    rating: row.votes ? Math.round(row.rating * 100) / 100 : null,
   };
 }
 
@@ -56,7 +65,8 @@ function counts() {
 
 function nextBook(skipKey) {
   if (!hasPool()) return null;
-  const row = db.prepare('SELECT * FROM unlabeled_books WHERE key NOT IN (SELECT key FROM labels) AND key != ? ORDER BY random() LIMIT 1').get(skipKey || '');
+  const row = db.prepare(`${WITH_RATING} WHERE u.key NOT IN (SELECT key FROM labels) AND u.key != ?
+    ORDER BY (COALESCE(r.n, 0) >= 5 AND r.avg >= 3) DESC, (u.source = 'rated-matched') DESC, random() LIMIT 1`).get(skipKey || '');
   return row ? card(row) : null;
 }
 
@@ -80,7 +90,7 @@ app.post('/api/undo', (req, res) => {
   const last = db.prepare('SELECT key, label FROM labels ORDER BY time DESC, rowid DESC LIMIT 1').get();
   if (!last) return res.json({ book: null, undone: null, counts: counts() });
   db.prepare('DELETE FROM labels WHERE key = ?').run(last.key);
-  const row = hasPool() ? db.prepare('SELECT * FROM unlabeled_books WHERE key = ?').get(last.key) : null;
+  const row = hasPool() ? db.prepare(`${WITH_RATING} WHERE u.key = ?`).get(last.key) : null;
   res.json({ book: row ? card(row) : nextBook(), undone: last, counts: counts() });
 });
 

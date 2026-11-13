@@ -155,8 +155,9 @@ function listTexts(db, cfg) {
   }
   const view = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'view' AND name = 'unlabeled_books'").get();
   if (view) {
-    for (const r of db.prepare('SELECT key, source FROM unlabeled_books').all()) {
-      out.push({ key: r.key, kind: 'unlabeled', source: r.source, file: path.join(r.source === 'feed' ? cfg.feedTextDir : cfg.matchedTextDir, r.key + '.txt') });
+    const dirs = { feed: cfg.feedTextDir, matched: cfg.matchedTextDir, rated: cfg.ratedTextDir };
+    for (const r of db.prepare('SELECT key, store FROM unlabeled_books').all()) {
+      out.push({ key: r.key, kind: 'unlabeled', source: r.store, file: path.join(dirs[r.store], r.key + '.txt') });
     }
   }
   return out;

@@ -4,6 +4,7 @@
 //   node src/fetch-books.js              everything below, in order
 //   node src/fetch-books.js --liked      only step 1
 //   node src/fetch-books.js --matched    only steps 2 and 3
+//   node src/fetch-books.js --rated      only steps 4 and 5
 //   node src/fetch-books.js --retry      also try again the books that failed before
 //   node src/fetch-books.js --target 1150   how many matched books to pick
 //
@@ -15,7 +16,13 @@
 //    words when the catalog knows the size) so that their years are spread
 //    like the years of the liked books. The pick is saved, so it never changes.
 // 3. Download and parse the picked books into "matched_books" (source = matched).
-// 4. Ratings: count and average of the catalog's user ratings for every book.
+// 4. Rated-matched set (milestone 3b): pick about 1,000 catalog books with the
+//    same rules as step 2, plus: at least 5 reader votes, and average ratings
+//    AND years spread like those of the liked books. Books of the old matched
+//    set that fit are reused. The pick is saved, so it never changes.
+// 5. Download and parse the rest into "rated_books". In the view
+//    "unlabeled_books" every book of this set has source = 'rated-matched'.
+// 6. Ratings: count and average of the catalog's user ratings for every book.
 //
 // Polite: every request goes through net.js (one at a time, 3 s pause).
 // Cached: each download is kept in data/fb2/<id>.fb2.zip and never asked for
@@ -27,11 +34,14 @@ const Database = require('better-sqlite3');
 const c = require('./common');
 const net = require('./net');
 const { parseFb2 } = require('./parse-fb2');
-const { rebuildMatched } = require('./dedupe');
+const { rebuildMatched, rebuildRated } = require('./dedupe');
 const enrich = require('./enrich');
 
 const SEED = 20261112;
 const DEFAULT_TARGET = 1150; // a little over 1,000, because some downloads fail
+const RATED_TARGET = 1050; // the rated-matched set
+const MIN_VOTES = 5; // a rated-matched book has at least this many reader votes
+const RATING_BIN = 0.25; // average ratings are matched in steps of a quarter star
 const CHARS_PER_WORD = 5.5; // catalog "Chars" divided by our word count, measured on the feed books
 const MIN_WORDS = 20000;
 const MAX_WORDS = 400000; // above this a book counts as a collection (same rule as enrich.js)
@@ -277,25 +287,28 @@ function pickMatched(db, cfg, cat, lookup, map, target) {
 
 // ---------------------------------------------------------------- step 3: download the matched books
 
-async function fetchMatched(db, cfg, retry) {
-  const picks = db.prepare('SELECT id FROM matched_pick ORDER BY pos').all();
-  const store = c.makeIngester(db, 'matched', cfg.matchedTextDir);
-  const done = new Map(db.prepare("SELECT key, status FROM fb2_fetch WHERE kind = 'matched'").all().map((r) => [r.key, r.status]));
+// Downloads and parses a saved pick. "set" says which one:
+//   { name, kind, ids, source, textDir, rebuild, viewSource, step }
+async function fetchPicked(db, cfg, cat, retry, set) {
+  const store = c.makeIngester(db, set.source, set.textDir);
+  const done = new Map(db.prepare('SELECT key, status FROM fb2_fetch WHERE kind = ?').all(set.kind).map((r) => [r.key, r.status]));
   let ok = 0, failed = 0, failsInRow = 0, sinceRebuild = 0;
   const refresh = () => {
-    rebuildMatched(db, cfg);
+    set.rebuild(db, cfg);
     enrich.enrichAll(db, cfg);
+    saveRatings(db, cat, true); // so the labelling page can show ratings for the new books at once
     sinceRebuild = 0;
   };
-  console.log(`Step 3: downloading ${picks.length} matched background books (about ${Math.round((picks.length - done.size) * 5 / 60)} minutes for the ones still missing) ...`);
-  for (const p of picks) {
-    const key = String(p.id);
+  const missing = set.ids.filter((id) => !done.has(String(id))).length;
+  console.log(`Step ${set.step}: downloading ${set.ids.length} ${set.name} books (about ${Math.round(missing * 5 / 60)} minutes for the ${missing} still missing) ...`);
+  for (const id of set.ids) {
+    const key = String(id);
     const before = done.get(key);
     if (before === 'ok' || (before === 'failed' && !retry)) {
       before === 'ok' ? ok++ : failed++;
       continue;
     }
-    const r = await fetchOne(db, cfg, store, 'matched', key, [p.id], `matched/${p.id}.fb2`);
+    const r = await fetchOne(db, cfg, store, set.kind, key, [id], `${set.source}/${id}.fb2`);
     if (r.status === 'ok') {
       ok++;
       failsInRow = 0;
@@ -303,29 +316,165 @@ async function fetchMatched(db, cfg, retry) {
     } else {
       failed++;
       failsInRow++;
-      console.log(`  FAILED matched ${key}: ${r.reason}`);
+      console.log(`  FAILED ${set.name} ${key}: ${r.reason}`);
       if (failsInRow >= STOP_AFTER_FAILS) {
         refresh();
         throw new Error(`${STOP_AFTER_FAILS} downloads failed in a row. Stopping to be polite; run the command again later.`);
       }
     }
-    // every 10 new books: put them into "matched_books", so the labelling page can show them
+    // every 10 new books: put them into the final table, so the labelling page can show them
     if (sinceRebuild >= 10) refresh();
-    if ((ok + failed) % 50 === 0) console.log(`  ${ok + failed} of ${picks.length} matched books done (${ok} ok, ${failed} failed)`);
+    if ((ok + failed) % 50 === 0) console.log(`  ${ok + failed} of ${set.ids.length} ${set.name} books done (${ok} ok, ${failed} failed)`);
   }
   refresh();
-  const usable = db.prepare("SELECT COUNT(*) AS n FROM unlabeled_books WHERE source = 'matched'").get().n;
-  console.log(`Step 3 done: ${ok} of ${picks.length} matched books parsed, ${failed} failed. ${usable} are usable (fiction, Russian, not a collection, not a duplicate).`);
+  const usable = db.prepare('SELECT COUNT(*) AS n FROM unlabeled_books WHERE source = ?').get(set.viewSource).n;
+  console.log(`Step ${set.step} done: ${ok} of ${set.ids.length} ${set.name} books parsed, ${failed} failed. ${usable} books are usable as "${set.viewSource}" (fiction, Russian, not a collection, not a duplicate).`);
   return { ok, failed, usable };
 }
 
-// ---------------------------------------------------------------- step 4: ratings
+function fetchMatched(db, cfg, cat, retry) {
+  const ids = db.prepare('SELECT id FROM matched_pick ORDER BY pos').all().map((r) => r.id);
+  return fetchPicked(db, cfg, cat, retry, { name: 'matched', kind: 'matched', ids, source: 'matched', textDir: cfg.matchedTextDir, rebuild: rebuildMatched, viewSource: 'matched', step: 3 });
+}
 
-function saveRatings(db, cat) {
+function fetchRated(db, cfg, cat, retry) {
+  const ids = db.prepare('SELECT id FROM rated_pick WHERE reused = 0 ORDER BY pos').all().map((r) => r.id);
+  return fetchPicked(db, cfg, cat, retry, { name: 'rated-matched', kind: 'rated', ids, source: 'rated', textDir: cfg.ratedTextDir, rebuild: rebuildRated, viewSource: 'rated-matched', step: 5 });
+}
+
+// ---------------------------------------------------------------- step 4: pick the rated-matched set
+
+const ratingBin = (avg) => Math.floor(avg / RATING_BIN + 1e-9) * RATING_BIN;
+
+// Like yearQuota, but for cells of (year, average-rating bin).
+function cellQuota(liked, target) {
+  const count = new Map();
+  for (const b of liked) {
+    const k = `${b.year}|${b.bin}`;
+    count.set(k, (count.get(k) || 0) + 1);
+  }
+  const rows = [...count].map(([k, n]) => ({ year: Number(k.split('|')[0]), bin: Number(k.split('|')[1]), exact: (n / liked.length) * target }));
+  for (const r of rows) r.n = Math.floor(r.exact);
+  let left = target - rows.reduce((s, r) => s + r.n, 0);
+  for (const r of [...rows].sort((a, b) => (b.exact - b.n) - (a.exact - a.n) || a.year - b.year || a.bin - b.bin)) {
+    if (left-- <= 0) break;
+    r.n++;
+  }
+  return rows.sort((a, b) => a.year - b.year || a.bin - b.bin);
+}
+
+function pickRated(db, cfg, cat, lookup, map, target) {
+  const have = db.prepare('SELECT COUNT(*) AS n FROM rated_pick').get().n;
+  if (have) {
+    console.log(`Step 4: the rated-matched pick is already saved (${have} books), keeping it.`);
+    return have;
+  }
+  const idOf = (key) => Number(String(key).split('-')[0]);
+  const rate = cat.prepare('SELECT COUNT(*) AS n, AVG(CAST(Rate AS REAL)) AS avg FROM librate WHERE BookId = ?');
+
+  // what to imitate: year and average rating of the liked books used in the models that have enough votes
+  const liked = [];
+  for (const r of db.prepare('SELECT key, COALESCE(cat_year, year) AS y FROM books WHERE COALESCE(is_collection, 0) = 0 AND is_fiction = 1').all()) {
+    const v = rate.get(idOf(r.key));
+    if (r.y >= 1800 && r.y <= 2100 && v.n >= MIN_VOTES) liked.push({ year: r.y, bin: ratingBin(v.avg) });
+  }
+  const quota = cellQuota(liked, target);
+
+  const minChars = Math.round(MIN_WORDS * CHARS_PER_WORD);
+  const maxChars = Math.round(MAX_WORDS * CHARS_PER_WORD);
+  const cells = new Map(); // "year|bin" -> candidates
+  for (const r of cat.prepare(`SELECT b.BookId AS id, b.Year AS year, b.Title AS title, v.avg AS avg FROM libbook b
+      JOIN (SELECT BookId, AVG(CAST(Rate AS REAL)) AS avg FROM librate GROUP BY BookId HAVING COUNT(*) >= ?) v ON v.BookId = b.BookId
+      WHERE b.Lang = 'ru' AND b.Deleted = '0' AND b.FileType = 'fb2' AND b.Year > 0
+        AND (b.Chars IS NULL OR b.Chars = 0 OR (b.Chars >= ? AND b.Chars <= ?)) ORDER BY b.BookId`).all(MIN_VOTES, minChars, maxChars)) {
+    const k = `${r.year}|${ratingBin(r.avg)}`;
+    if (!cells.has(k)) cells.set(k, []);
+    cells.get(k).push(r);
+  }
+  const rnd = mulberry32(SEED + 1);
+  // books of the old matched set that are usable can be reused: they go to the front of their cell
+  const reusable = new Set(db.prepare("SELECT key FROM unlabeled_books WHERE store = 'matched'").all().map((r) => Number(r.key)));
+  for (const list of cells.values()) {
+    shuffle(list, rnd);
+    list.sort((a, b) => reusable.has(b.id) - reusable.has(a.id)); // the sort is stable, so the random order is kept inside each half
+  }
+
+  const taken = new Set();
+  const banned = new Set(); // liked books, feed books, and old matched books that turned out unusable
+  for (const r of db.prepare('SELECT key FROM books UNION SELECT key FROM feed_books').all()) banned.add(idOf(r.key));
+  for (const r of db.prepare('SELECT id FROM matched_pick').all()) if (!reusable.has(r.id)) banned.add(r.id);
+  const likedNorms = new Set(db.prepare("SELECT norm FROM parsed WHERE source IN ('archive', 'feed') AND norm IS NOT NULL").all().map((r) => r.norm.split(' | ')[1]));
+  const sigOf = (id, title) => {
+    const info = lookup(id);
+    return info ? `${info.authorIds[0] || ''} | ${c.normaliseText(title)}` : null;
+  };
+  const seenTitles = new Set(); // author + title, so two editions of one book are not both in the set
+  for (const r of db.prepare('SELECT key, title FROM matched_books').all()) seenTitles.add(sigOf(Number(r.key), r.title));
+
+  const usable = (r) => {
+    if (taken.has(r.id) || banned.has(r.id)) return false;
+    if (reusable.has(r.id)) return true; // already downloaded, parsed and checked
+    if (enrich.isCollection(r.title, null)) return false;
+    const info = lookup(r.id);
+    if (!info) return false;
+    const kinds = [...new Set(info.genres.map((g) => map.codes[g]).filter(Boolean))].map((g) => map.groups[g]);
+    if (!kinds.includes('fiction') || kinds.includes('nonfiction')) return false;
+    const title = c.normaliseText(r.title);
+    if (!title || likedNorms.has(title)) return false;
+    const sig = `${info.authorIds[0] || ''} | ${title}`;
+    if (seenTitles.has(sig)) return false;
+    seenTitles.add(sig);
+    return true;
+  };
+
+  const picked = [];
+  const short = [];
+  const cursor = new Map();
+  const takeFrom = (year, bin, n) => {
+    const k = `${year}|${bin}`;
+    const list = cells.get(k) || [];
+    let i = cursor.get(k) || 0;
+    let got = 0;
+    while (got < n && i < list.length) {
+      const r = list[i++];
+      if (usable(r)) {
+        picked.push({ id: r.id, year, bin, reused: reusable.has(r.id) ? 1 : 0 });
+        taken.add(r.id);
+        got++;
+      }
+    }
+    cursor.set(k, i);
+    return got;
+  };
+  for (const q of quota) {
+    let need = q.n - takeFrom(q.year, q.bin, q.n);
+    // a cell with too few books borrows from the nearest years, keeping the same rating bin
+    for (let d = 1; need > 0 && d <= 10; d++) {
+      need -= takeFrom(q.year - d, q.bin, need);
+      if (need > 0) need -= takeFrom(q.year + d, q.bin, need);
+    }
+    if (need > 0) short.push(`${q.year} / rating ${q.bin} (short by ${need})`);
+  }
+  shuffle(picked, rnd); // download order is random, so a half-finished run is still a fair sample
+  const insert = db.prepare('INSERT OR IGNORE INTO rated_pick (id, year, bin, pos, reused) VALUES (?, ?, ?, ?, ?)');
+  db.transaction(() => {
+    picked.forEach((p, i) => insert.run(p.id, p.year, p.bin, i + 1, p.reused));
+  })();
+  enrich.enrichAll(db, cfg); // the view now shows the reused books as "rated-matched"
+  const reused = picked.filter((p) => p.reused).length;
+  console.log(`Step 4: picked ${picked.length} rated-matched books in ${quota.length} cells of year and average rating (liked books with at least ${MIN_VOTES} votes: ${liked.length}). `
+    + `${reused} are reused from the old matched set, ${picked.length - reused} must be downloaded.`);
+  if (short.length) console.log('  cells without enough catalog books: ' + short.join(', '));
+  return picked.length;
+}
+
+// ---------------------------------------------------------------- step 6: ratings
+
+function saveRatings(db, cat, quiet) {
   const has = cat.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'librate'").get();
   c.setMeta(db, 'has_ratings', !!has);
   if (!has) {
-    console.log('Step 4: the catalog has no ratings table (librate), skipped.');
+    if (!quiet) console.log('Step 6: the catalog has no ratings table (librate), skipped.');
     return;
   }
   const q = cat.prepare('SELECT COUNT(*) AS n, AVG(CAST(Rate AS REAL)) AS avg FROM librate WHERE BookId = ?');
@@ -340,14 +489,14 @@ function saveRatings(db, cat) {
       if (r.n) rated++;
     }
   })();
-  console.log(`Step 4: ratings looked up for ${keys.length} books, ${rated} have at least one rating.`);
+  if (!quiet) console.log(`Step 6: ratings looked up for ${keys.length} books, ${rated} have at least one rating.`);
 }
 
 // ---------------------------------------------------------------- main
 
 async function main() {
   const args = process.argv.slice(2);
-  const only = args.includes('--liked') ? 'liked' : args.includes('--matched') ? 'matched' : null;
+  const only = args.includes('--liked') ? 'liked' : args.includes('--matched') ? 'matched' : args.includes('--rated') ? 'rated' : null;
   const retry = args.includes('--retry');
   const t = args.indexOf('--target');
   const target = t !== -1 ? Number(args[t + 1]) || DEFAULT_TARGET : DEFAULT_TARGET;
@@ -363,10 +512,14 @@ async function main() {
   const catalog = enrich.openCatalog(cfg);
   try {
     const { map } = enrich.enrichAll(db, cfg);
-    if (only !== 'matched') await fetchLiked(db, cfg, cat, retry);
-    if (only !== 'liked') {
+    if (!only || only === 'liked') await fetchLiked(db, cfg, cat, retry);
+    if (!only || only === 'matched') {
       pickMatched(db, cfg, cat, catalog.lookup, map, target);
-      await fetchMatched(db, cfg, retry);
+      await fetchMatched(db, cfg, cat, retry);
+    }
+    if (!only || only === 'rated') {
+      pickRated(db, cfg, cat, catalog.lookup, map, RATED_TARGET);
+      await fetchRated(db, cfg, cat, retry);
     }
     saveRatings(db, cat);
   } finally {
@@ -383,4 +536,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, yearQuota };
+module.exports = { main, yearQuota, cellQuota, pickRated, RATED_TARGET };

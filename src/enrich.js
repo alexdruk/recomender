@@ -33,7 +33,7 @@ const EXTRA = {
 };
 
 // Which rows of "parsed" each final table is built from, and its "source" value.
-const PARSED_SOURCE = { books: 'archive', feed_books: 'feed', matched_books: 'matched' };
+const PARSED_SOURCE = { books: 'archive', feed_books: 'feed', matched_books: 'matched', rated_books: 'rated' };
 
 function addColumns(db, table) {
   const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((r) => r.name));
@@ -42,17 +42,25 @@ function addColumns(db, table) {
 }
 
 // The view "unlabeled_books": every book that may be shown or scored as
-// unlabeled - feed books and matched background books that are Russian-language
-// fiction, parsed, not already liked and not a collection.
+// unlabeled - feed books, matched background books and rated-matched books
+// that are Russian-language fiction, parsed, not already liked and not a collection.
+//   source = 'feed', 'matched' or 'rated-matched'. Every book listed in
+//            "rated_pick" is 'rated-matched', also the ones reused from the old matched set.
+//   store  = where the text and the vectors of the book live: 'feed', 'matched' or 'rated'.
+//            The old matched set is exactly the books with store = 'matched'.
 function createUnlabeledView(db) {
   const cols = ['key', 'source_file', 'format', 'authors', 'title', 'genres', 'lang', 'src_lang', 'translators', 'series', 'series_no',
-    'year', 'annotation', 'chars', 'words', 'is_translation', 'label', 'parse_status', ...Object.keys(EXTRA), 'source'].join(', ');
+    'year', 'annotation', 'chars', 'words', 'is_translation', 'label', 'parse_status', ...Object.keys(EXTRA)].join(', ');
   const where = "parse_status != 'failed' AND lang = 'ru' AND is_fiction = 1 AND COALESCE(in_archive, 0) = 0 AND COALESCE(is_collection, 0) = 0";
   db.exec(`DROP VIEW IF EXISTS unlabeled_books;
     CREATE VIEW unlabeled_books AS
-      SELECT ${cols} FROM feed_books WHERE ${where}
+      SELECT ${cols}, 'feed' AS source, 'feed' AS store FROM feed_books WHERE ${where}
       UNION ALL
-      SELECT ${cols} FROM matched_books WHERE ${where} AND key NOT IN (SELECT key FROM feed_books)`);
+      SELECT ${cols}, CASE WHEN key IN (SELECT CAST(id AS TEXT) FROM rated_pick) THEN 'rated-matched' ELSE 'matched' END AS source, 'matched' AS store
+        FROM matched_books WHERE ${where} AND key NOT IN (SELECT key FROM feed_books)
+      UNION ALL
+      SELECT ${cols}, 'rated-matched' AS source, 'rated' AS store FROM rated_books WHERE ${where}
+        AND key NOT IN (SELECT key FROM feed_books) AND key NOT IN (SELECT key FROM matched_books)`);
 }
 
 // ---------------------------------------------------------------- collections
@@ -189,12 +197,13 @@ function enrichAll(db, cfg) {
     const liked = enrichTable(db, cfg, 'books', cat, map);
     const feed = enrichTable(db, cfg, 'feed_books', cat, map);
     const matched = enrichTable(db, cfg, 'matched_books', cat, map);
+    const rated = enrichTable(db, cfg, 'rated_books', cat, map);
     createUnlabeledView(db);
     const unmapped = new Map(liked.unmapped);
     for (const [g, n] of feed.unmapped) unmapped.set(g, (unmapped.get(g) || 0) + n);
     c.setMeta(db, 'unmapped_genres', [...unmapped].sort((a, b) => b[1] - a[1]).map(([code, books]) => ({ code, books })));
     c.setMeta(db, 'has_catalog', !!cat);
-    return { liked, feed, matched, map, hasCatalog: !!cat };
+    return { liked, feed, matched, rated, map, hasCatalog: !!cat };
   } finally {
     if (cat) cat.close();
   }
