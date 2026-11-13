@@ -5,6 +5,7 @@
 //   node src/fetch-books.js --liked      only step 1
 //   node src/fetch-books.js --matched    only steps 2 and 3
 //   node src/fetch-books.js --rated      only steps 4 and 5
+//   node src/fetch-books.js --read       only step 7
 //   node src/fetch-books.js --retry      also try again the books that failed before
 //   node src/fetch-books.js --target 1150   how many matched books to pick
 //
@@ -23,6 +24,9 @@
 // 5. Download and parse the rest into "rated_books". In the view
 //    "unlabeled_books" every book of this set has source = 'rated-matched'.
 // 6. Ratings: count and average of the catalog's user ratings for every book.
+// 7. Books I marked "read it" (milestone 3c): every book marked "read it, did not
+//    like it" or "read it, liked it" on the labelling page is downloaded and
+//    parsed into "extra_books", unless I already have its text.
 //
 // Polite: every request goes through net.js (one at a time, 3 s pause).
 // Cached: each download is kept in data/fb2/<id>.fb2.zip and never asked for
@@ -34,7 +38,7 @@ const Database = require('better-sqlite3');
 const c = require('./common');
 const net = require('./net');
 const { parseFb2 } = require('./parse-fb2');
-const { rebuildMatched, rebuildRated } = require('./dedupe');
+const { rebuildMatched, rebuildRated, rebuildExtra } = require('./dedupe');
 const enrich = require('./enrich');
 
 const SEED = 20261112;
@@ -327,6 +331,10 @@ async function fetchPicked(db, cfg, cat, retry, set) {
     if ((ok + failed) % 50 === 0) console.log(`  ${ok + failed} of ${set.ids.length} ${set.name} books done (${ok} ok, ${failed} failed)`);
   }
   refresh();
+  if (!set.viewSource) {
+    console.log(`Step ${set.step} done: ${ok} of ${set.ids.length} ${set.name} books parsed, ${failed} failed.`);
+    return { ok, failed };
+  }
   const usable = db.prepare('SELECT COUNT(*) AS n FROM unlabeled_books WHERE source = ?').get(set.viewSource).n;
   console.log(`Step ${set.step} done: ${ok} of ${set.ids.length} ${set.name} books parsed, ${failed} failed. ${usable} books are usable as "${set.viewSource}" (fiction, Russian, not a collection, not a duplicate).`);
   return { ok, failed, usable };
@@ -340,6 +348,23 @@ function fetchMatched(db, cfg, cat, retry) {
 function fetchRated(db, cfg, cat, retry) {
   const ids = db.prepare('SELECT id FROM rated_pick WHERE reused = 0 ORDER BY pos').all().map((r) => r.id);
   return fetchPicked(db, cfg, cat, retry, { name: 'rated-matched', kind: 'rated', ids, source: 'rated', textDir: cfg.ratedTextDir, rebuild: rebuildRated, viewSource: 'rated-matched', step: 5 });
+}
+
+// Step 7. Books marked "read it" on the labelling page. A book whose text I already
+// have (it is a liked book, or one of the feed / matched / rated-matched books) is not downloaded again.
+function fetchRead(db, cfg, cat, retry) {
+  const hasMarks = db.prepare("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'read_marks'").get();
+  if (!hasMarks) {
+    console.log('Step 7: no books are marked "read it" yet.');
+    return { ok: 0, failed: 0 };
+  }
+  const have = new Set(db.prepare('SELECT key FROM books UNION SELECT key FROM feed_books UNION SELECT key FROM matched_books UNION SELECT key FROM rated_books').all().map((r) => r.key));
+  const ids = db.prepare("SELECT id FROM read_marks WHERE mark IN ('disliked', 'liked') ORDER BY time").all().map((r) => r.id).filter((id) => !have.has(String(id)));
+  if (!ids.length) {
+    console.log('Step 7: no books marked "read it" are waiting for a download.');
+    return { ok: 0, failed: 0 };
+  }
+  return fetchPicked(db, cfg, cat, retry, { name: 'read-it', kind: 'extra', ids, source: 'extra', textDir: cfg.extraTextDir, rebuild: rebuildExtra, viewSource: null, step: 7 });
 }
 
 // ---------------------------------------------------------------- step 4: pick the rated-matched set
@@ -496,7 +521,7 @@ function saveRatings(db, cat, quiet) {
 
 async function main() {
   const args = process.argv.slice(2);
-  const only = args.includes('--liked') ? 'liked' : args.includes('--matched') ? 'matched' : args.includes('--rated') ? 'rated' : null;
+  const only = args.includes('--liked') ? 'liked' : args.includes('--matched') ? 'matched' : args.includes('--rated') ? 'rated' : args.includes('--read') ? 'read' : null;
   const retry = args.includes('--retry');
   const t = args.indexOf('--target');
   const target = t !== -1 ? Number(args[t + 1]) || DEFAULT_TARGET : DEFAULT_TARGET;
@@ -521,6 +546,7 @@ async function main() {
       pickRated(db, cfg, cat, catalog.lookup, map, RATED_TARGET);
       await fetchRated(db, cfg, cat, retry);
     }
+    if (!only || only === 'read') await fetchRead(db, cfg, cat, retry);
     saveRatings(db, cat);
   } finally {
     cat.close();

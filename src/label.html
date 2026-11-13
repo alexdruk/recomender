@@ -7,16 +7,16 @@
 <style>
   :root {
     --bg: #f6f4ef; --card: #fffdf8; --ink: #23201b; --soft: #6f695e; --line: #ddd6c8;
-    --never: #b3402f; --maybe: #8a6d1c; --want: #2f7a4b; --star: #d69a00; --focus: #2b5fb3;
+    --never: #b3402f; --maybe: #8a6d1c; --want: #2f7a4b; --skip: #6f695e; --focus: #2b5fb3; --pick: #efe9da;
   }
   @media (prefers-color-scheme: dark) {
     :root { --bg: #1b1a17; --card: #26241f; --ink: #ece7dc; --soft: #a39c8d; --line: #3b382f;
-      --never: #e07a68; --maybe: #d8b550; --want: #6cc48d; --star: #f2bd2e; --focus: #86aef0; }
+      --never: #e07a68; --maybe: #d8b550; --want: #6cc48d; --skip: #a39c8d; --focus: #86aef0; --pick: #34312a; }
   }
   * { box-sizing: border-box; }
   body { margin: 0; background: var(--bg); color: var(--ink); font: 17px/1.5 Georgia, "Times New Roman", serif; }
-  main { max-width: 760px; margin: 0 auto; padding: 16px; }
-  nav { display: flex; gap: 8px; align-items: center; margin-bottom: 16px; font-family: system-ui, sans-serif; }
+  main { max-width: 800px; margin: 0 auto; padding: 16px; }
+  nav { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; margin-bottom: 16px; font-family: system-ui, sans-serif; }
   nav button { font: inherit; font-size: 15px; padding: 8px 14px; border: 1px solid var(--line); border-radius: 8px; background: none; color: var(--soft); cursor: pointer; }
   nav button[aria-selected="true"] { background: var(--card); color: var(--ink); border-color: var(--ink); }
   #counter { margin-left: auto; font-size: 14px; color: var(--soft); text-align: right; font-variant-numeric: tabular-nums; }
@@ -25,35 +25,61 @@
   h1 { font-size: 26px; line-height: 1.25; margin: 4px 0 12px; text-wrap: balance; }
   .facts { font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); display: flex; flex-wrap: wrap; gap: 6px 14px; margin-bottom: 12px; }
   .facts .rating { color: var(--ink); font-weight: 600; font-variant-numeric: tabular-nums; }
+  .facts .flag { color: var(--maybe); }
   .chips { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px; }
   .chip { font-family: system-ui, sans-serif; font-size: 13px; padding: 2px 10px; border: 1px solid var(--line); border-radius: 999px; }
   .annotation { white-space: pre-wrap; overflow-wrap: anywhere; }
-  .annotation.none { color: var(--soft); font-style: italic; }
-  .answers { display: grid; grid-template-columns: repeat(3, 1fr); gap: 10px; margin-top: 16px; font-family: system-ui, sans-serif; }
-  .answers button, #undo { font: inherit; font-size: 15px; padding: 12px 8px; border-radius: 10px; border: 2px solid; background: var(--card); cursor: pointer; }
-  .answers button:hover, #undo:hover { filter: brightness(0.96); }
-  button:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
+  .none { color: var(--soft); font-style: italic; }
+  h2 { font: 600 14px system-ui, sans-serif; color: var(--soft); margin: 20px 0 6px; border-top: 1px solid var(--line); padding-top: 14px; }
+  .comment { font-size: 15.5px; margin: 0 0 12px; white-space: pre-wrap; overflow-wrap: anywhere; }
+  .comment small { display: block; font: 12.5px system-ui, sans-serif; color: var(--soft); }
+  .answers { display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px; margin-top: 16px; font-family: system-ui, sans-serif; position: sticky; bottom: 0; background: var(--bg); padding: 8px 0; }
+  .answers button, #undo { font: inherit; font-size: 15px; padding: 12px 6px; border-radius: 10px; border: 2px solid; background: var(--card); cursor: pointer; }
+  button:hover { filter: brightness(0.96); }
+  button:focus-visible, input:focus-visible { outline: 3px solid var(--focus); outline-offset: 2px; }
   kbd { font: 12px ui-monospace, monospace; border: 1px solid currentColor; border-radius: 4px; padding: 0 5px; margin-right: 6px; }
-  #b-never { color: var(--never); } #b-maybe { color: var(--maybe); } #b-want { color: var(--want); }
-  .under { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); gap: 12px; }
+  #b-never { color: var(--never); } #b-maybe { color: var(--maybe); } #b-want { color: var(--want); } #b-skip { color: var(--skip); }
+  .under { display: flex; justify-content: space-between; align-items: center; margin-top: 4px; font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); gap: 12px; }
   #undo { padding: 6px 12px; border-width: 1px; color: var(--soft); font-size: 14px; }
   #said { min-height: 1.5em; }
-  .list-head { font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); margin-bottom: 8px; }
-  .group { margin: 18px 0 4px; font-weight: bold; }
-  .row { display: flex; gap: 8px; align-items: baseline; padding: 3px 0; }
-  .star { font-size: 20px; line-height: 1; border: 0; background: none; color: var(--line); cursor: pointer; padding: 0 4px; }
-  .star[aria-pressed="true"] { color: var(--star); }
-  .row small { color: var(--soft); font-family: system-ui, sans-serif; }
+  .head { font-family: system-ui, sans-serif; font-size: 14px; color: var(--soft); margin-bottom: 10px; }
+  .group { margin: 20px 0 4px; font-weight: bold; }
+  .group small { font: 13px system-ui, sans-serif; color: var(--soft); font-weight: normal; margin-left: 8px; }
+  .row { display: flex; gap: 10px; align-items: center; padding: 5px 8px; border-radius: 8px; }
+  .row.current { background: var(--pick); outline: 1px solid var(--line); }
+  .row .what { flex: 1; min-width: 0; }
+  .row small { color: var(--soft); font-family: system-ui, sans-serif; font-size: 13px; display: block; }
+  .marks { display: flex; gap: 4px; flex: none; font-family: system-ui, sans-serif; }
+  .marks button, .row > button { font: 13px system-ui, sans-serif; padding: 4px 8px; border: 1px solid var(--line); border-radius: 6px; background: var(--card); color: var(--soft); cursor: pointer; white-space: nowrap; }
+  .marks button[aria-pressed="true"] { color: var(--card); border-color: transparent; }
+  .marks button[data-m="disliked"][aria-pressed="true"] { background: var(--never); }
+  .marks button[data-m="liked"][aria-pressed="true"] { background: var(--want); }
+  .marks button[data-m="unread"][aria-pressed="true"] { background: var(--maybe); }
+  .marks button[data-m="forgot"][aria-pressed="true"] { background: var(--skip); }
+  label.switch { display: flex; gap: 10px; align-items: center; padding: 4px 8px; cursor: pointer; border-radius: 8px; }
+  label.switch:hover { background: var(--pick); }
+  label.switch input { width: 18px; height: 18px; accent-color: var(--want); flex: none; }
+  .aka { color: var(--soft); font-size: 15px; }
+  label.switch small { color: var(--soft); font: 13px system-ui, sans-serif; margin-left: auto; white-space: nowrap; }
+  #q { width: 100%; font: 17px system-ui, sans-serif; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: var(--card); color: var(--ink); margin-bottom: 10px; }
+  @media (max-width: 620px) { .answers { grid-template-columns: repeat(2, 1fr); } .row { flex-wrap: wrap; } }
   [hidden] { display: none !important; }
 </style>
 </head>
 <body>
 <main>
   <nav role="tablist">
+    <button role="tab" id="tab-authors" aria-selected="false">My authors</button>
     <button role="tab" id="tab-new" aria-selected="true">New books</button>
-    <button role="tab" id="tab-mine" aria-selected="false">My books</button>
+    <button role="tab" id="tab-theirs" aria-selected="false">Books by my authors</button>
+    <button role="tab" id="tab-add" aria-selected="false">Add a book</button>
     <div id="counter"></div>
   </nav>
+
+  <section id="view-authors" hidden>
+    <div class="head" id="authors-head"></div>
+    <div id="authors"></div>
+  </section>
 
   <section id="view-new">
     <div class="card" id="card"></div>
@@ -61,6 +87,7 @@
       <button id="b-never"><kbd>1</kbd>Would never read</button>
       <button id="b-maybe"><kbd>2</kbd>Maybe</button>
       <button id="b-want"><kbd>3</kbd>Want to read</button>
+      <button id="b-skip"><kbd>0</kbd>Cannot decide</button>
     </div>
     <div class="under">
       <span id="said"></span>
@@ -68,17 +95,28 @@
     </div>
   </section>
 
-  <section id="view-mine" hidden>
-    <div class="list-head" id="mine-head"></div>
-    <div id="mine"></div>
+  <section id="view-theirs" hidden>
+    <div class="head" id="theirs-head"></div>
+    <div id="theirs"></div>
+  </section>
+
+  <section id="view-add" hidden>
+    <div class="head">Type part of an author name or a title, then mark the book. Books marked here are downloaded the next time you run "npm run funnel".</div>
+    <input id="q" type="search" placeholder="Author or title ..." autocomplete="off">
+    <div id="found"></div>
+    <h2>Books added here</h2>
+    <div id="added"></div>
   </section>
 </main>
 
 <script>
 const $ = (id) => document.getElementById(id);
-const NAMES = { never: 'would never read', maybe: 'maybe', want: 'want to read' };
+const TABS = ['authors', 'new', 'theirs', 'add'];
+const NAMES = { never: 'would never read', maybe: 'maybe', want: 'want to read', skip: 'cannot decide' };
+const MARKS = [['disliked', '1', 'Read, did not like'], ['liked', '2', 'Read, liked'], ['unread', '3', 'Not read'], ['forgot', '0', 'Do not remember']];
 let current = null;
 let busy = false;
+let shown = 'new';
 
 function el(tag, cls, text) {
   const e = document.createElement(tag);
@@ -93,48 +131,65 @@ async function api(path, body) {
   return res.json();
 }
 
+const rated = (b) => (b.votes ? `${b.rating.toFixed(2)} (${b.votes === 1 ? '1 vote' : b.votes + ' votes'})` : 'no ratings');
+
+// ---------------------------------------------------------------- New books
+
 function showCounts(n) {
-  $('counter').textContent = `${n.done} done (${n.never} never, ${n.maybe} maybe, ${n.want} want) - ${n.left} waiting`;
+  $('counter').textContent = `${n.done} answered (${n.never} never, ${n.maybe} maybe, ${n.want} want) - ${n.left} waiting`;
 }
 
-function showBook(book) {
+function showBook(book, hasComments) {
   current = book;
   const card = $('card');
   card.replaceChildren();
+  window.scrollTo(0, 0);
   if (!book) {
-    card.append(el('p', 'annotation none', 'No more books waiting. New ones appear here as they are downloaded - press any answer key or reload to look again.'));
+    card.append(el('p', 'none', 'No more eligible books waiting. Run "npm run funnel" to refill the queue, or reload to look again.'));
     return;
   }
-  card.append(el('div', 'author', book.authors || 'Unknown author'), el('h1', null, book.title));
+  card.append(el('div', 'author', (book.authors || 'Unknown author') + (book.followed ? '  ★ on my list' : '')), el('h1', null, book.title));
   const facts = el('div', 'facts');
-  if (book.series) facts.append(el('span', null, 'Series: ' + book.series));
-  facts.append(el('span', null, book.words.toLocaleString('en-US') + ' words'));
-  const votes = book.votes === 1 ? '1 vote' : book.votes + ' votes';
-  facts.append(el('span', 'rating', book.votes ? `Rating ${book.rating.toFixed(2)} (${votes})` : 'No ratings yet'));
+  facts.append(el('span', 'rating', 'Rating ' + rated(book)));
+  if (book.series) facts.append(el('span', book.flagged ? 'flag' : null, 'Series: ' + book.series));
+  else facts.append(el('span', null, 'Not in a series'));
+  if (book.continuation) facts.append(el('span', null, 'I liked an earlier book of this series'));
+  facts.append(el('span', null, book.words.toLocaleString('en-US') + ' words (about ' + Math.round(book.words / 250) + ' pages)'));
   card.append(facts);
   const chips = el('div', 'chips');
   for (const g of book.groups) chips.append(el('span', 'chip', g));
   card.append(chips);
-  card.append(el('div', book.annotation ? 'annotation' : 'annotation none', book.annotation || 'No annotation.'));
+  card.append(el('div', book.annotation ? 'annotation' : 'annotation none', book.annotation || 'No description.'));
+  if (hasComments !== false) {
+    const more = book.commentCount > book.comments.length ? `, the newest ${book.comments.length} of ${book.commentCount}` : '';
+    card.append(el('h2', null, book.comments.length ? `Reader comments${more}` : 'No reader comments'));
+    for (const m of book.comments) {
+      const p = el('p', 'comment');
+      p.append(el('small', null, `${m.name} - ${m.date}`), document.createTextNode(m.text));
+      card.append(p);
+    }
+  }
 }
 
-async function load() {
+let commentsExist = true;
+async function loadNew() {
   try {
     const r = await api('/api/next');
-    showBook(r.book);
+    commentsExist = r.hasComments;
+    showBook(r.book, commentsExist);
     showCounts(r.counts);
   } catch (e) { $('said').textContent = 'Error: ' + e.message; }
 }
 
 async function answer(label) {
   if (busy) return;
-  if (!current) return load();
+  if (!current) return loadNew();
   busy = true;
   try {
     const title = current.title;
     const r = await api('/api/label', { key: current.key, label });
     $('said').textContent = `"${title}" - ${NAMES[label]}`;
-    showBook(r.book);
+    showBook(r.book, commentsExist);
     showCounts(r.counts);
   } catch (e) { $('said').textContent = 'Error: ' + e.message; }
   busy = false;
@@ -146,60 +201,202 @@ async function undo() {
   try {
     const r = await api('/api/undo', {});
     $('said').textContent = r.undone ? 'Last answer taken back.' : 'Nothing to undo.';
-    if (r.undone) showBook(r.book);
+    if (r.undone) showBook(r.book, commentsExist);
     showCounts(r.counts);
   } catch (e) { $('said').textContent = 'Error: ' + e.message; }
   busy = false;
 }
 
-async function loadMine() {
-  const r = await api('/api/liked');
-  const head = $('mine-head');
-  const setHead = (n) => { head.textContent = `${r.books.length} liked books, ${n} starred. Click a star to mark a favourite.`; };
-  setHead(r.starred);
-  const box = $('mine');
+// ---------------------------------------------------------------- My authors
+
+async function loadAuthors() {
+  const r = await api('/api/authors');
+  const head = $('authors-head');
+  const setHead = (n) => { head.textContent = `${r.authors.length} authors of my liked books, ${n} on my list. Tick "I almost always read this author". Only for these authors can a new book be "want to read" straight away.`; };
+  setHead(r.followed);
+  const box = $('authors');
   box.replaceChildren();
-  let author = null;
-  for (const b of r.books) {
-    if (b.authors !== author) { author = b.authors; box.append(el('div', 'group', author || 'Unknown author')); }
-    const row = el('div', 'row');
-    const star = el('button', 'star', '★');
-    star.setAttribute('aria-pressed', String(b.starred));
-    star.setAttribute('aria-label', 'Favourite: ' + b.title);
-    star.onclick = async () => {
-      const on = star.getAttribute('aria-pressed') !== 'true';
-      const s = await api('/api/star', { key: b.key, starred: on });
-      star.setAttribute('aria-pressed', String(on));
-      setHead(s.starred);
+  for (const a of r.authors) {
+    const row = el('label', 'switch');
+    const box1 = el('input');
+    box1.type = 'checkbox';
+    box1.checked = a.followed;
+    box1.setAttribute('aria-label', 'I almost always read ' + a.name);
+    box1.onchange = async () => {
+      try { setHead((await api('/api/follow', { id: a.id, on: box1.checked })).followed); } catch (e) { box1.checked = !box1.checked; head.textContent = 'Error: ' + e.message; }
     };
-    row.append(star, el('span', null, b.title));
-    if (b.series) row.append(el('small', null, b.series));
+    const name = el('span', null, a.name);
+    if (a.aka) name.append(el('em', 'aka', ' (also: ' + a.aka + ')'));
+    row.append(box1, name, el('small', null, a.liked === 1 ? '1 liked book' : a.liked + ' liked books'));
     box.append(row);
   }
 }
 
-function tab(which) {
-  $('tab-new').setAttribute('aria-selected', String(which === 'new'));
-  $('tab-mine').setAttribute('aria-selected', String(which === 'mine'));
-  $('view-new').hidden = which !== 'new';
-  $('view-mine').hidden = which !== 'mine';
-  if (which === 'mine') loadMine();
+// ---------------------------------------------------------------- Books by my authors
+
+let rows = []; // { book, node, buttons }
+let at = -1;
+
+function pick(i, scroll) {
+  if (rows[at]) rows[at].node.classList.remove('current');
+  at = i;
+  if (rows[at]) {
+    rows[at].node.classList.add('current');
+    if (scroll) rows[at].node.scrollIntoView({ block: 'center', behavior: 'smooth' });
+  }
 }
 
-$('tab-new').onclick = () => tab('new');
-$('tab-mine').onclick = () => tab('mine');
+function paint(r) {
+  for (const b of r.buttons) b.setAttribute('aria-pressed', String(b.dataset.m === r.book.mark));
+}
+
+async function mark(i, m, advance) {
+  const r = rows[i];
+  if (!r) return;
+  const value = r.book.mark === m ? null : m; // pressing the same answer again clears it
+  try {
+    await api('/api/mark', { id: r.book.id, mark: value, tab: 'authors' });
+    r.book.mark = value;
+    paint(r);
+    theirsHead();
+    if (advance && value) {
+      let next = i + 1;
+      while (next < rows.length && rows[next].book.mark) next++;
+      if (next < rows.length) pick(next, true);
+    }
+  } catch (e) { $('theirs-head').textContent = 'Error: ' + e.message; }
+}
+
+let theirsNote = '';
+function theirsHead() {
+  const done = rows.filter((r) => r.book.mark).length;
+  $('theirs-head').textContent = `${rows.length} books, ${done} answered. ${theirsNote} Keys for the highlighted book: 1 = read it, did not like it; 2 = read it, liked it; 3 = have not read it; 0 = do not remember; arrows move. Books marked "read" are downloaded by the next "npm run funnel".`;
+}
+
+async function loadTheirs() {
+  const r = await api('/api/author-books');
+  theirsNote = r.listFilled ? 'Authors on my list.' : 'My list of authors is still empty, so this shows every author with at least 2 liked books.';
+  const box = $('theirs');
+  box.replaceChildren();
+  rows = [];
+  at = -1;
+  for (const g of r.groups) {
+    const h = el('div', 'group', g.author.name + (g.author.aka ? ' (also: ' + g.author.aka + ')' : ''));
+    h.append(el('small', null, `${g.author.liked} liked, ${g.books.length} other books`));
+    box.append(h);
+    for (const b of g.books) {
+      const node = el('div', 'row');
+      const what = el('div', 'what', b.title);
+      const series = b.series ? `${b.series}${b.no ? ' #' + b.no : ''}${b.total ? ' of ' + b.total : ''} - ` : '';
+      what.append(el('small', null, `${series}${rated(b)}${b.year ? ' - ' + b.year : ''}`));
+      const marks = el('div', 'marks');
+      const entry = { book: b, node, buttons: [] };
+      const i = rows.length;
+      for (const [m, key, text] of MARKS) {
+        const btn = el('button', null, text);
+        btn.dataset.m = m;
+        btn.title = `Key ${key}`;
+        btn.onclick = (ev) => { ev.stopPropagation(); pick(i); mark(i, m, false); };
+        entry.buttons.push(btn);
+        marks.append(btn);
+      }
+      node.onclick = () => pick(i);
+      node.append(what, marks);
+      paint(entry);
+      rows.push(entry);
+      box.append(node);
+    }
+  }
+  theirsHead();
+  const first = rows.findIndex((x) => !x.book.mark);
+  pick(first === -1 ? 0 : first, false);
+}
+
+// ---------------------------------------------------------------- Add a book
+
+function showAdded(list) {
+  const box = $('added');
+  box.replaceChildren();
+  if (!list.length) return box.append(el('div', 'none', 'Nothing added yet.'));
+  for (const b of list) {
+    const node = el('div', 'row');
+    const what = el('div', 'what', b.title);
+    what.append(el('small', null, `${b.authors} - read it, did not like it`));
+    const rm = el('button', null, 'Remove');
+    rm.onclick = async () => showAdded((await api('/api/mark', { id: b.id, mark: null, tab: 'add' })).added);
+    node.append(what, rm);
+    box.append(node);
+  }
+}
+
+let searchTimer = null;
+let searchNo = 0;
+async function search() {
+  const no = ++searchNo;
+  const q = $('q').value.trim();
+  const r = await api('/api/search?q=' + encodeURIComponent(q));
+  if (no !== searchNo) return; // a newer search is already on its way
+  showAdded(r.added);
+  const box = $('found');
+  box.replaceChildren();
+  if (!r.books.length) return box.append(el('div', 'none', q.length < 2 ? '' : 'Nothing found.'));
+  for (const b of r.books) {
+    const node = el('div', 'row');
+    const what = el('div', 'what', b.title);
+    const series = b.series ? ` - ${b.series}${b.no ? ' #' + b.no : ''}` : '';
+    what.append(el('small', null, `${b.authors || 'Unknown author'}${series} - ${rated(b)}${b.year ? ' - ' + b.year : ''}${b.inLibrary ? ' - already in my library' : ''}`));
+    const btn = el('button', null, b.mark === 'disliked' ? 'Marked: did not like' : 'Read it, did not like it');
+    btn.disabled = b.mark === 'disliked' || b.inLibrary;
+    btn.onclick = async () => {
+      const x = await api('/api/mark', { id: b.id, mark: 'disliked', tab: 'add' });
+      btn.textContent = 'Marked: did not like';
+      btn.disabled = true;
+      showAdded(x.added);
+    };
+    node.append(what, btn);
+    box.append(node);
+  }
+}
+
+// ---------------------------------------------------------------- tabs and keys
+
+function tab(which) {
+  shown = which;
+  for (const t of TABS) {
+    $('tab-' + t).setAttribute('aria-selected', String(t === which));
+    $('view-' + t).hidden = t !== which;
+  }
+  if (which === 'authors') loadAuthors();
+  if (which === 'new') loadNew();
+  if (which === 'theirs') loadTheirs();
+  if (which === 'add') { search(); $('q').focus(); }
+}
+
+for (const t of TABS) $('tab-' + t).onclick = () => tab(t);
 $('b-never').onclick = () => answer('never');
 $('b-maybe').onclick = () => answer('maybe');
 $('b-want').onclick = () => answer('want');
+$('b-skip').onclick = () => answer('skip');
 $('undo').onclick = undo;
+$('q').oninput = () => { clearTimeout(searchTimer); searchTimer = setTimeout(search, 250); };
+
 document.addEventListener('keydown', (e) => {
-  if ($('view-new').hidden || e.metaKey || e.ctrlKey || e.altKey) return;
-  if (e.key === '1') answer('never');
-  else if (e.key === '2') answer('maybe');
-  else if (e.key === '3') answer('want');
-  else if (e.key === 'Backspace') { e.preventDefault(); undo(); }
+  if (e.metaKey || e.ctrlKey || e.altKey || e.target.tagName === 'INPUT') return;
+  if (shown === 'new') {
+    if (e.key === '1') answer('never');
+    else if (e.key === '2') answer('maybe');
+    else if (e.key === '3') answer('want');
+    else if (e.key === '0') answer('skip');
+    else if (e.key === 'Backspace') { e.preventDefault(); undo(); }
+  } else if (shown === 'theirs') {
+    const m = MARKS.find((x) => x[1] === e.key);
+    if (m) mark(at, m[0], true);
+    else if (e.key === 'ArrowDown' || e.key === 'j') { e.preventDefault(); pick(Math.min(rows.length - 1, at + 1), true); }
+    else if (e.key === 'ArrowUp' || e.key === 'k') { e.preventDefault(); pick(Math.max(0, at - 1), true); }
+  }
 });
-load();
+// a link like http://localhost:3000/#theirs opens that tab
+tab(TABS.includes(location.hash.slice(1)) ? location.hash.slice(1) : 'new');
 </script>
 </body>
 </html>

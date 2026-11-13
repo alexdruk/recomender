@@ -33,7 +33,7 @@ const EXTRA = {
 };
 
 // Which rows of "parsed" each final table is built from, and its "source" value.
-const PARSED_SOURCE = { books: 'archive', feed_books: 'feed', matched_books: 'matched', rated_books: 'rated' };
+const PARSED_SOURCE = { books: 'archive', feed_books: 'feed', matched_books: 'matched', rated_books: 'rated', extra_books: 'extra' };
 
 function addColumns(db, table) {
   const have = new Set(db.prepare(`PRAGMA table_info(${table})`).all().map((r) => r.name));
@@ -198,6 +198,7 @@ function enrichAll(db, cfg) {
     const feed = enrichTable(db, cfg, 'feed_books', cat, map);
     const matched = enrichTable(db, cfg, 'matched_books', cat, map);
     const rated = enrichTable(db, cfg, 'rated_books', cat, map);
+    enrichTable(db, cfg, 'extra_books', cat, map); // books I marked "read it" (milestone 3c); not part of the unlabeled view
     createUnlabeledView(db);
     const unmapped = new Map(liked.unmapped);
     for (const [g, n] of feed.unmapped) unmapped.set(g, (unmapped.get(g) || 0) + n);

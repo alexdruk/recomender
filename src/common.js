@@ -109,6 +109,8 @@ function openDb(cfg) {
     -- milestone 3b: the rated-matched comparison set. "rated_pick" lists every book of the set;
     -- reused = 1 means the book is already in matched_books, the others are in rated_books
     CREATE TABLE IF NOT EXISTS rated_books (${BOOK_COLUMNS});
+    -- milestone 3c: books I marked "read it" on the labelling page, downloaded like the other sets
+    CREATE TABLE IF NOT EXISTS extra_books (${BOOK_COLUMNS});
     CREATE TABLE IF NOT EXISTS rated_pick (id INTEGER PRIMARY KEY, year INTEGER, bin REAL, pos INTEGER, reused INTEGER);
     -- milestone 3: my answers from the labelling page (label: never / maybe / want)
     CREATE TABLE IF NOT EXISTS labels (

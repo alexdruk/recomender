@@ -28,7 +28,7 @@ const Database = require('better-sqlite3');
 const c = require('./common');
 const { isCollection } = require('./enrich');
 
-const VERSION = 3; // raise this to force a rebuild of the catalog part
+const VERSION = 5; // raise this to force a rebuild of the catalog part
 const CHARS_PER_WORD = 5.5; // catalog "Chars" divided by our word count, measured on the feed books
 const ELIGIBLE = ['standalone', 'first', 'continuation', 'unknown'];
 
@@ -66,7 +66,8 @@ function buildCatalogPart(ix, cfg, catalogPath) {
   const map = JSON.parse(fs.readFileSync(cfg.genreMapPath, 'utf8'));
   ix.exec(`
     DROP TABLE IF EXISTS cat; DROP TABLE IF EXISTS cat_author; DROP TABLE IF EXISTS alias; DROP TABLE IF EXISTS seq_total;
-    DROP TABLE IF EXISTS rate_agg; DROP TABLE IF EXISTS review_agg;
+    DROP TABLE IF EXISTS rate_agg; DROP TABLE IF EXISTS review_agg; DROP TABLE IF EXISTS author;
+    CREATE TABLE author (id INTEGER PRIMARY KEY, name TEXT, aka TEXT); -- aka: other names of the same author (pen names)
     CREATE TABLE alias (id INTEGER PRIMARY KEY, root INTEGER NOT NULL);
     CREATE TABLE seq_total (seq_id INTEGER PRIMARY KEY, name TEXT, total INTEGER);
     CREATE TABLE cat (
@@ -115,6 +116,17 @@ function buildCatalogPart(ix, cfg, catalogPath) {
     authorName.set(r.id, c.cleanSpaces([r.f, r.m, r.l].filter(Boolean).join(' ')) || c.cleanSpaces(r.n) || `author ${r.id}`);
     if (r.master > 0) master.set(r.id, r.master);
   }
+  const aka = new Map(); // main author id -> other names
+  for (const [id, main] of master) {
+    const name = authorName.get(id);
+    if (!name || name === authorName.get(main)) continue;
+    if (!aka.has(main)) aka.set(main, []);
+    if (!aka.get(main).includes(name)) aka.get(main).push(name);
+  }
+  const putName = ix.prepare('INSERT OR REPLACE INTO author (id, name, aka) VALUES (?, ?, ?)');
+  ix.transaction(() => {
+    for (const [id, name] of authorName) if (!master.has(id)) putName.run(id, name, aka.has(id) ? aka.get(id).slice(0, 4).join(', ') : null);
+  })();
   // the books of the index, loaded once; the other tables are then read without joins (much faster)
   const liveBooks = new Map();
   for (const b of ix.prepare(`SELECT BookId AS id, Title AS title, Year AS year, Chars AS chars, FileType AS type, Time AS time, SrcLang AS src

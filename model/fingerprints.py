@@ -101,7 +101,10 @@ def load():
     fb2 = {r["key"]: r for r in rows("SELECT key, words, annotation FROM parsed WHERE source = 'liked_fb2' AND parse_status != 'failed'")}
     fetch = rows("SELECT * FROM fb2_fetch") if has("fb2_fetch") else []
     styl = {(r["kind"], r["key"]): json.loads(r["features"]) for r in rows("SELECT * FROM stylometry WHERE features IS NOT NULL")} if has("stylometry") else {}
-    labels = {r["key"]: r["label"] for r in rows("SELECT key, label FROM labels")} if has("labels") else {}
+    # milestone 3c: answers set aside by the series rule (status = 'rule') and "cannot decide" answers are not used
+    label_cols = {r["name"] for r in rows("PRAGMA table_info(labels)")} if has("labels") else set()
+    label_where = "label IN ('never', 'maybe', 'want')" + (" AND status IS NULL" if "status" in label_cols else "")
+    labels = {r["key"]: r["label"] for r in rows(f"SELECT key, label FROM labels WHERE {label_where}")} if has("labels") else {}
     stars = {r["key"] for r in rows("SELECT key FROM stars")} if has("stars") else set()
     counts = {
         "liked_all": len(liked_all),

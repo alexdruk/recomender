@@ -58,6 +58,10 @@ function rebuildRated(db, cfg) {
   return rebuild(db, 'rated', 'rated_books', 'unlabeled', cfg.ratedTextDir);
 }
 
+function rebuildExtra(db, cfg) {
+  return rebuild(db, 'extra', 'extra_books', 'read', cfg.extraTextDir);
+}
+
 async function main() {
   const cfg = c.loadConfig();
   const db = c.openDb(cfg);
@@ -76,4 +80,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, rebuildArchive, rebuildFeed, rebuildMatched, rebuildRated };
+module.exports = { main, rebuildArchive, rebuildFeed, rebuildMatched, rebuildRated, rebuildExtra };
