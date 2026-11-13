@@ -38,6 +38,15 @@ function loadConfig() {
     deleteZipAfterParse: cfg.deleteZipAfterParse !== false,
     catalogTables: cfg.catalogTables || [],
     reportsDir: path.join(ROOT, 'reports'),
+    // the final product: daily loop, page and model
+    port: Number(cfg.port) || 3000,
+    checkEveryHours: Number(cfg.checkEveryHours) || 6,
+    topPercent: Number(cfg.topPercent) || 5,
+    restDays: Number(cfg.restDays) || 7,
+    retrainEveryAnswers: Number(cfg.retrainEveryAnswers) || 10,
+    filters: Object.assign({ russianOnly: true, fictionOnly: true, skipCollections: true, minWords: 10000, skipLibraryBooks: true, seriesRule: true }, cfg.filters || {}),
+    python: path.join(ROOT, '.venv', 'bin', 'python'),
+    logPath: path.join(dataDir, 'server.log'),
   };
 }
 

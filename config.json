@@ -18,5 +18,18 @@
     "libjoinedbooks",
     "librate",
     "reviews"
-  ]
+  ],
+  "port": 3000,
+  "checkEveryHours": 6,
+  "topPercent": 5,
+  "restDays": 7,
+  "retrainEveryAnswers": 10,
+  "filters": {
+    "russianOnly": true,
+    "fictionOnly": true,
+    "skipCollections": true,
+    "minWords": 10000,
+    "skipLibraryBooks": true,
+    "seriesRule": true
+  }
 }
