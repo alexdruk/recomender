@@ -6,9 +6,9 @@ Built by `model/funnel.py` (run everything with `npm run funnel`). Milestone 3c 
 
 1. **Do reader comments exist? Yes.** The catalog has a dump `lib.reviews.sql.gz`: 823,860 comments on 191,395 books, each with the reader's name, the full text and a date and time (2007-09-23 to 2026-11-13). 301 of my 309 liked books have comments (median 13 per book).
 
-2. **Does my series rule hold in my own library? Mostly, not fully.** Of my 309 liked books, 87 are standalone, 108 are number 1 of a series, and 82 are a later book of a series. Of those 82 later books, 56 have an earlier book of the same series among my liked books, and **26 do not** (8.4% of the library): there the library holds a later book without an earlier one. For 32 more the catalog gives no number (most are whole-series bundles). So the rule "never start a series from a later book" fits about nine liked books in ten; the exceptions are listed below.
+2. **Does my series rule hold in my own library? Mostly, not fully.** Of my 309 liked books, 87 are standalone, 108 are number 1 of a series, and 82 are a later book of a series. Of those 82 later books, 57 have an earlier book of the same series among my liked books, and **25 do not** (8.1% of the library): there the library holds a later book without an earlier one. For 32 more the catalog gives no number (most are whole-series bundles). So the rule "never start a series from a later book" fits about nine liked books in ten; the exceptions are listed below.
 
-3. **Which signals beat the noise?** Tested on 190 liked books against 430 eligible rated-matched books (standalone or first in a series, on both sides), adding one signal at a time: **series length**: no (+0.002 ± 0.011); **like-minded readers**: no (+0.006 ± 0.014); **item-to-item**: no (-0.001 ± 0.011); **reader comments**: no (+0.012 ± 0.021). Not beating the noise: series length, like-minded readers, item-to-item, reader comments. Best model: **rb+s+lm+i2i+c**, ROC AUC 0.783 ± 0.048 (rb alone: 0.764 ± 0.052). The "author on my list" signal cannot be tested this way, see below.
+3. **Which signals beat the noise?** Tested on 190 liked books against 430 eligible rated-matched books (standalone or first in a series, on both sides), adding one signal at a time: **series length**: no (+0.001 ± 0.011); **like-minded readers**: no (+0.006 ± 0.017); **item-to-item**: no (-0.000 ± 0.007); **reader comments**: no (+0.013 ± 0.016). Not beating the noise: series length, like-minded readers, item-to-item, reader comments. Best model: **rb+s+lm+i2i+c**, ROC AUC 0.792 ± 0.045 (rb alone: 0.772 ± 0.047). The "author on my list" signal cannot be tested this way, see below.
 
 "Beats the noise" means: the average gain over the 50 test folds is bigger than the spread of that gain from fold to fold.
 
@@ -25,7 +25,7 @@ The table `reviews` has the columns `Name`, `Time`, `BookId`, `Text`: reader nam
 | Liked books (all in the library) | 309 | 301 | 97.4% | 6 / 13 / 30 | 7 / 14 / 30 |
 | Liked books used in the models | 294 | 289 | 98.3% | 7 / 13 / 30 | 7 / 14 / 30 |
 | Rated-matched set (all) | 1044 | 954 | 91.4% | 2 / 5 / 12 | 2 / 5 / 13 |
-| Rated-matched set, eligible only | 509 | 476 | 93.5% | 3 / 5 / 14 | 3 / 6 / 15 |
+| Rated-matched set, eligible only | 512 | 479 | 93.6% | 3 / 6 / 15 | 3 / 6 / 16 |
 | Catalog fiction with at least 5 votes | 84684 | 71623 | 84.6% | 1 / 3 / 8 | 2 / 4 / 9 |
 
 So the typical liked book has 13 comments and the typical rated-matched book has 5. My liked books are commented more, the same way they have more votes.
@@ -42,11 +42,11 @@ For every book the catalog index stores the series name, the number in the serie
 
 |  | Standalone | First in a series | Later, with an earlier liked book (continuation) | Later, without an earlier liked book | In a series, number unknown | Total |
 | --- | --- | --- | --- | --- | --- | --- |
-| All liked books | 87 | 108 | 56 | 26 | 32 | 309 |
-| share | 28.2% | 35.0% | 18.1% | 8.4% | 10.4% |  |
-| Liked books used in the models (no collections, no non-fiction) | 82 | 108 | 56 | 26 | 22 | 294 |
+| All liked books | 87 | 108 | 57 | 25 | 32 | 309 |
+| share | 28.2% | 35.0% | 18.4% | 8.1% | 10.4% |  |
+| Liked books used in the models (no collections, no non-fiction) | 82 | 108 | 57 | 25 | 22 | 294 |
 
-Of the 82 liked books that are a later book of a series, **56 have an earlier book of the same series among my liked books and 26 do not.**
+Of the 82 liked books that are a later book of a series, **57 have an earlier book of the same series among my liked books and 25 do not.**
 
 The liked books that break the rule (a later book, no earlier book of the series in my library):
 
@@ -70,7 +70,6 @@ The liked books that break the rule (a later book, no earlier book of the series
 | Нинель Мягкова | Магия большого города. Журналистка | Прогресс и магия | 2 | 4 |
 | Елена Ивановна Михалкова | Колодец и бабочка | Расследования Макара Илюшина и Сергея Бабкина | 32 | 35 |
 | Роберт Шекли | Запах мысли | Сборник рассказов «Дипломатическая неприкосновенность» | 3 | 11 |
-| Сергей Мусаниф | Борден | Система дефрагментации | 7 | 9 |
 | Алайна Салах | Только между нами | Скандал [Салах] | 5 | 8 |
 | Марианна Красовская, Нани Кроноцкая | Некромантика по любви | Туманная Галлия | 2 | 2 |
 | Котаро Исака | Поезд убийц | Убийца | 2 | 5 |
@@ -92,7 +91,7 @@ Some of these are loose series where every book is a separate story (detective s
 
 The two "first in a series only" rows are the fair comparison for "am I suspicious of long series?": both sides are number 1 of their series. There the median series has 3 books for my liked books and 3 for the rated-matched set; series longer than 5 books: 21.3% against 19.7%; longer than 10 books: 11.1% against 3.8%. So my library does **not** show that I avoid long series: I started long series more often than the comparison set does. (The series length is what the catalog holds today; a series may have been shorter when I started it.)
 
-The rated-matched set was drawn without looking at series, and 51.2% of it are later books of series I never started. Under my rule those were never real candidates, which is why they are left out from now on.
+The rated-matched set was drawn without looking at series, and 51.0% of it are later books of series I never started. Under my rule those were never real candidates, which is why they are left out from now on.
 
 ## The rules, applied to the whole catalog
 
@@ -106,24 +105,24 @@ How many catalog books pass each rule in turn. Different editions of one book ar
 | ... and not already in my library | 422,631 |
 | ... with at least 5 votes (the rating can be trusted) | 84,384 |
 | ... with an average of 3 or more | 49,280 |
-| ... eligible under the series rule | 29,043 |
+| ... eligible under the series rule | 29,063 |
 
-The series rule, on the 49,280 books that pass every rule before it: 17,567 standalone, 8,474 first, 314 continuation, 2,688 unknown, 20,237 later. So the rule removes 20,237 books (41.1%). Of the books that pass everything, 10,808 have an average above 4 (the ones I prefer).
+The series rule, on the 49,280 books that pass every rule before it: 17,567 standalone, 8,474 first, 334 continuation, 2,688 unknown, 20,217 later. So the rule removes 20,217 books (41.0%). Of the books that pass everything, 10,820 have an average above 4 (the ones I prefer).
 
 ### The same rules on the downloaded books
 
 | Set | Books | At least 5 votes and average 3 or more | ... and eligible | ... of those: standalone / first / continuation / number unknown |
 | --- | --- | --- | --- | --- |
-| Rated-matched | 1044 | 1021 | 502 | 245 / 179 / 32 / 46 |
+| Rated-matched | 1044 | 1021 | 505 | 245 / 179 / 35 / 46 |
 | Old matched (not in rated-matched) | 1055 | 77 | 42 | 23 / 16 / 0 / 3 |
 | Feed | 314 | 8 | 2 | 0 / 2 / 0 / 0 |
-| All downloaded books | 2413 | 1106 | 546 | 268 / 197 / 32 / 49 |
+| All downloaded books | 2413 | 1106 | 549 | 268 / 197 / 35 / 49 |
 
 Only eligible books are used in the comparison set, in the lists and in the labelling queue.
 
 ### My old answers on books that are not eligible
 
-Of my 100 answers, **52 are on books my series rule would never have shown me** (31 would never read, 19 maybe, 2 want to read). They are marked "rule" and left out of every taste metric. 48 answers remain (27 would never read, 18 maybe, 3 want to read).
+Of my 155 answers, **52 are on books my series rule would never have shown me** (31 would never read, 19 maybe, 2 want to read). They are marked "rule" and left out of every taste metric. 103 answers remain (57 would never read, 33 maybe, 13 want to read); 1 "cannot decide" answers are not used anywhere.
 
 ## Part D. Signals for Decision 1
 
@@ -139,15 +138,15 @@ The signals:
 
 | Model | **ROC AUC** | Median percentile of a liked book | Liked books in the top 5% | AUC liked vs "would never read" |
 | --- | --- | --- | --- | --- |
-| rb: ratings + genres, length, translated, in a series | **0.764 ± 0.052** | 18.2% ± 6.7 | 20.5% ± 9.5 | 0.760 ± 0.018 |
-| rb+s: rb + series length | **0.766 ± 0.050** | 18.1% ± 6.6 | 20.6% ± 8.6 | 0.771 ± 0.010 |
-| rb+s+lm: + like-minded readers | **0.772 ± 0.052** | 16.1% ± 6.5 | 22.5% ± 12.0 | 0.763 ± 0.015 |
-| rb+s+lm+i2i: + item-to-item | **0.771 ± 0.051** | 15.8% ± 5.7 | 22.7% ± 11.1 | 0.776 ± 0.012 |
-| rb+s+lm+i2i+c: + reader comments | **0.783 ± 0.048** | 13.9% ± 5.9 | 26.8% ± 11.4 | 0.793 ± 0.011 |
-| rb+s+i2i: item-to-item without like-minded readers | **0.768 ± 0.050** | 16.1% ± 7.0 | 24.0% ± 10.1 | 0.793 ± 0.009 |
-| rb+s+lm+c: comments without item-to-item | **0.783 ± 0.049** | 14.4% ± 6.2 | 24.2% ± 10.9 | 0.782 ± 0.013 |
+| rb: ratings + genres, length, translated, in a series | **0.772 ± 0.047** | 17.0% ± 6.1 | 21.6% ± 10.1 | 0.738 ± 0.008 |
+| rb+s: rb + series length | **0.774 ± 0.048** | 17.2% ± 6.3 | 21.9% ± 9.9 | 0.736 ± 0.005 |
+| rb+s+lm: + like-minded readers | **0.780 ± 0.046** | 14.9% ± 5.1 | 22.9% ± 11.2 | 0.734 ± 0.011 |
+| rb+s+lm+i2i: + item-to-item | **0.779 ± 0.046** | 14.7% ± 5.6 | 22.2% ± 11.2 | 0.735 ± 0.006 |
+| rb+s+lm+i2i+c: + reader comments | **0.792 ± 0.045** | 14.0% ± 5.9 | 29.9% ± 12.0 | 0.750 ± 0.004 |
+| rb+s+i2i: item-to-item without like-minded readers | **0.776 ± 0.046** | 15.5% ± 5.4 | 24.1% ± 10.3 | 0.747 ± 0.009 |
+| rb+s+lm+c: comments without item-to-item | **0.790 ± 0.045** | 14.3% ± 5.8 | 28.6% ± 11.9 | 0.743 ± 0.006 |
 
-ROC AUC: 0.5 is coin-flipping, 1.0 is perfect. Median percentile: where the typical liked test book sits in the ranking of the comparison test books (lower is better, 50% is chance). Top 5%: the share of liked test books that score above 95% of the comparison books (chance gives 5%). The last column separates the liked books from the 27 eligible books I marked "would never read"; with so few books it is rough.
+ROC AUC: 0.5 is coin-flipping, 1.0 is perfect. Median percentile: where the typical liked test book sits in the ranking of the comparison test books (lower is better, 50% is chance). Top 5%: the share of liked test books that score above 95% of the comparison books (chance gives 5%). The last column separates the liked books from the 57 eligible books I marked "would never read"; with so few books it is rough.
 
 ### Fold by fold: which additions are real?
 
@@ -155,30 +154,30 @@ Each row compares two models on the same 50 folds, which removes most of the fol
 
 | Comparison | What it tests | AUC gain | Beats the noise? |
 | --- | --- | --- | --- |
-| rb+s against rb | series length on top of rb | +0.002 ± 0.011 (better in 29 of 50 folds) | no, inside the noise |
-| rb+s+lm against rb+s | like-minded readers on top of that | +0.006 ± 0.014 (better in 34 of 50 folds) | no, inside the noise |
-| rb+s+lm+i2i against rb+s+lm | item-to-item on top of that | -0.001 ± 0.011 (better in 29 of 50 folds) | no, inside the noise |
-| rb+s+lm+i2i+c against rb+s+lm+i2i | reader comments on top of that | +0.012 ± 0.021 (better in 40 of 50 folds) | no, inside the noise |
-| rb+s+i2i against rb+s | item-to-item instead of like-minded readers | +0.002 ± 0.015 (better in 31 of 50 folds) | no, inside the noise |
-| rb+s+lm+i2i against rb+s+i2i | like-minded readers when item-to-item is already there | +0.003 ± 0.013 (better in 34 of 50 folds) | no, inside the noise |
-| rb+s+lm+c against rb+s+lm | reader comments without item-to-item | +0.011 ± 0.023 (better in 37 of 50 folds) | no, inside the noise |
+| rb+s against rb | series length on top of rb | +0.001 ± 0.011 (better in 29 of 50 folds) | no, inside the noise |
+| rb+s+lm against rb+s | like-minded readers on top of that | +0.006 ± 0.017 (better in 34 of 50 folds) | no, inside the noise |
+| rb+s+lm+i2i against rb+s+lm | item-to-item on top of that | -0.000 ± 0.007 (better in 23 of 50 folds) | no, inside the noise |
+| rb+s+lm+i2i+c against rb+s+lm+i2i | reader comments on top of that | +0.013 ± 0.016 (better in 38 of 50 folds) | no, inside the noise |
+| rb+s+i2i against rb+s | item-to-item instead of like-minded readers | +0.003 ± 0.016 (better in 30 of 50 folds) | no, inside the noise |
+| rb+s+lm+i2i against rb+s+i2i | like-minded readers when item-to-item is already there | +0.003 ± 0.014 (better in 34 of 50 folds) | no, inside the noise |
+| rb+s+lm+c against rb+s+lm | reader comments without item-to-item | +0.010 ± 0.017 (better in 33 of 50 folds) | no, inside the noise |
 
-- Series length on top of rb: **does not beat the noise** (+0.002 ± 0.011 (better in 29 of 50 folds)).
-- Like-minded readers on top of that: **does not beat the noise** (+0.006 ± 0.014 (better in 34 of 50 folds)).
-- Item-to-item on top of that: **does not beat the noise** (-0.001 ± 0.011 (better in 29 of 50 folds)).
-- Reader comments on top of that: **does not beat the noise** (+0.012 ± 0.021 (better in 40 of 50 folds)).
+- Series length on top of rb: **does not beat the noise** (+0.001 ± 0.011 (better in 29 of 50 folds)).
+- Like-minded readers on top of that: **does not beat the noise** (+0.006 ± 0.017 (better in 34 of 50 folds)).
+- Item-to-item on top of that: **does not beat the noise** (-0.000 ± 0.007 (better in 23 of 50 folds)).
+- Reader comments on top of that: **does not beat the noise** (+0.013 ± 0.016 (better in 38 of 50 folds)).
 
-There are 973 like-minded readers on average inside a training part (from 867 to 1084).
+There are 974 like-minded readers on average inside a training part (from 854 to 1055).
 
 ### Author on my list (step 13)
 
-**My list of followed authors is still empty** (tab "My authors" of the labelling page). This signal is stored for every book and used in the short list and in the test of Decision 1 below, but it is **not** in the table above, on purpose: the list is made from my liked books, so every book by a listed author in the test would be a liked one, and the test is author-grouped, so a model never sees the same author on both sides. Any number for it there would be meaningless. Its real test is my answers in the "New books" tab, reported separately for listed and unknown authors.
+My list has **15 authors**; 36 of my 294 liked books are by them. This signal is stored for every book and used in the short list and in the test of Decision 1 below, but it is **not** in the table above, on purpose: the list is made from my liked books, so every book by a listed author in the test would be a liked one, and the test is author-grouped, so a model never sees the same author on both sides. Any number for it there would be meaningless. Its real test is my answers in the "New books" tab, reported separately for listed and unknown authors.
 
 ### Continuations, reported separately
 
-56 of the liked books used in the models are continuations, and 32 rated-matched books are (unread later books of series I liked). They are in no model. For reference, the best model (rb+s+lm+i2i+c) gives the liked continuations a median score of 0.59, against 0.65 for the liked books of the main test and 0.34 for the comparison books; these scores come from models that never saw the author.
+57 of the liked books used in the models are continuations, and 35 rated-matched books are (unread later books of series I liked). They are in no model. For reference, the best model (rb+s+lm+i2i+c) gives the liked continuations a median score of 0.59, against 0.65 for the liked books of the main test and 0.35 for the comparison books; these scores come from models that never saw the author.
 
-In the catalog, 460 fiction books are continuations of series I liked and are not in my library (editions counted separately). The next book of each series I have started (my highest liked number + 1), when the catalog has it:
+In the catalog, 480 fiction books are continuations of series I liked and are not in my library (editions counted separately). The next book of each series I have started (my highest liked number + 1), when the catalog has it:
 
 | Rating | Votes | Id | Author | Title | Series |
 | --- | --- | --- | --- | --- | --- |
@@ -208,13 +207,13 @@ In the catalog, 460 fiction books are continuations of series I liked and are no
 | 4.16 | 32 | 862493 | Борис Вячеславович Конофальский | Охотник | Во сне и наяву [=Дорогой снов] (2 of 3) |
 | 4.15 | 13 | 888405 | Алекс Кош | Тени Грейфолла 2 | де Грейв (2 of 3) |
 
-(73 more are not shown.)
+(71 more are not shown.)
 
 ## Part E. Text test for Decision 2
 
 Every book now has a second fingerprint made from its opening only: the first 25,000 words (about 100 pages), with the same stylometry numbers and the same embedding method as the whole book (the same number of chunks, spread through the opening). Every book has both fingerprints. Opening and whole-book vectors of the same book have a cosine similarity of 0.982 on average.
 
-> **Skipped: 0 books are marked "read it, did not like it" and have text; the test needs at least 30.** Mark books in the tabs "Books by my authors" (key 1) and "Add a book" of the labelling page, then run `npm run funnel` again: it downloads them politely, fingerprints them and runs this test.
+> **Skipped: 1 books are marked "read it, did not like it" and have text; the test needs at least 30.** Mark books in the tabs "Books by my authors" (key 1) and "Add a book" of the labelling page, then run `npm run funnel` again: it downloads them politely, fingerprints them and runs this test.
 
 What the test will do: liked books against books I read and did not like, with liked books by the same authors where there are enough of them; four models (ratings and genres only; whole-book text only; opening text only; ratings and genres plus the better text version); author-grouped folds, so no book and no author is in both the training part and the test part.
 
@@ -222,80 +221,80 @@ What the test will do: liked books against books I read and did not like, with l
 
 ### By my authors
 
-**My list of authors is still empty, so this uses every author with at least 2 liked books** (55 authors). Fill the list in the tab "My authors" to make it mine. Eligible fiction books by these authors that are not in my library and not marked as read, newest first. One edition per title; books with at least 5 votes and an average below 3 are left out. 1268 books in all, the newest 40 are shown.
+Authors on my list. Eligible fiction books by these authors that are not in my library and not marked as read, newest first. One edition per title; books with at least 5 votes and an average below 3 are left out. 877 books in all, the newest 40 are shown.
 
 | Year | Rating | Votes | Id | Author | Title | Series |
 | --- | --- | --- | --- | --- | --- | --- |
 | 2026 | 2.33 | 3 | 895502 | Инди Видум | Осторожно, магия открывается! Том 1 | Осторожно, магия открывается! (1 of 1) |
-| 2026 |  | 0 | 895307 | Софья Валерьевна Ролдугина | Осень со вкусом кофе. Коллекция уютных историй |  |
-| 2026 | 3.96 | 25 | 894502 | Борис Вячеславович Конофальский | Божьим промыслом. Засовы и решётки | Путь инквизитора [= Инквизитор] (18 of 18) |
-| 2026 | 3.27 | 11 | 894178 | Сева Сотх | Ретро Бит. Акт 10 | Ретро Бит (10 of 10) |
-| 2026 | 4.11 | 9 | 893993 | Ольга Александровна Куно | Прочнее оков |  |
-| 2026 | 3.20 | 5 | 893845 | Нинель Мягкова | Последняя Гадина империи | Яды и тотемы (1 of 1) |
-| 2026 | 3.56 | 27 | 893679 | Сергей Сергеевич Мусаниф | Кодекс физрука | Кодекс физрука (1 of 1) |
-| 2026 | 3.67 | 3 | 892640 | Анюта Соколова | Поводок |  |
-| 2026 |  | 0 | 892634 | Софья Валерьевна Ролдугина | Рыжий и скрипка | Игры Эн Ро Гримм (1 of 1) |
 | 2026 | 3.24 | 38 | 892226 | Инди Видум | Бездна | Петя и Валерон (11 of 11) |
-| 2026 | 5.00 | 1 | 892165 | Кирилл Сергеевич Клеванский | Матабар XI | Матабар (11 of 11) |
-| 2026 | 1.00 | 1 | 891764 | Максим Андреевич Далин | Время неблагих. Книга 3 | Мир Королей (10 of 10) |
-| 2026 | 3.36 | 11 | 891631 | Сева Сотх | Ретро Бит. Акт 9 | Ретро Бит (9 of 10) |
-| 2026 |  | 0 | 891376 | Брендон Сандерсон | Огни Декабрины | Космер. Мирал (1 of 1) |
-| 2026 | 3.93 | 15 | 891339 | Екатерина Насута | Кицхен вступает в бой | Такие странные Каэр (3 of 3) |
-| 2026 | 3.00 | 1 | 891076 | Екатерина Насута | Кровь зимы | Бастионы (1 of 1) |
-| 2026 |  | 0 | 890299 | Анна Шнайдер | Закрыть гештальт | Семейные ценности (number not known) |
-| 2026 |  | 0 | 890298 | Анна Шнайдер | Предатели тоже плачут | Семейные ценности (number not known) |
-| 2026 | 3.33 | 6 | 889935 | Анюта Соколова | Эмкаэлка |  |
-| 2026 | 3.00 | 2 | 889932 | Анюта Соколова | Диагноз |  |
-| 2026 | 4.33 | 3 | 889267 | Елена Кароль | Хорошая, плохая, грешная 1 | Дикий Дикий Запад (1 of 3) |
-| 2026 | 1.00 | 1 | 888900 | Елена Кароль | Княжьи постебушки |  |
-| 2026 |  | 0 | 888836 | Дарья Верескова | Хранители Тории: Город запретных желаний | Из Приграничья в Изнанку (1 of 1) |
-| 2026 | 3.00 | 3 | 888801 | Елена Кароль | Химера растительного происхождения. Часть 1 | Химера (1 of 1) |
-| 2026 | 1.00 | 2 | 888603 | Анна Ледова | Тарья берёт своё | Вогульская княжна (1 of 1) |
-| 2026 | 4.00 | 4 | 888299 | Юлия Стешенко | Сага о принце на белом коне. Книга 2 | Темные сказки белого севера (3 of 4) |
-| 2026 | 3.40 | 5 | 888068 | Дарья Верескова | Подарок для рыцаря смерти |  |
 | 2026 | 3.73 | 11 | 888010 | Марина Ефиминюк | Драконье счастье | Драконовы невесты (3 of 3) |
+| 2026 |  | 0 | 887969 | Евгений Юрьевич Лукин | Чёрная пятница | Лыцк, Баклужино, Суслов (27 of 27) |
 | 2026 | 3.71 | 45 | 887576 | Инди Видум | Рубеж | Петя и Валерон (10 of 11) |
-| 2026 | 3.17 | 6 | 887250 | Александра Лисина | Ловушка для мастера | Гибрид (17 of 17) |
-| 2026 | 3.33 | 9 | 885972 | Елена Кароль | Инженер с того света |  |
-| 2026 | 4.00 | 3 | 884994 | Татьяна Владимировна Солодкова | Прыгать с платформы запрещается |  |
-| 2026 | 3.65 | 31 | 884789 | Сева Сотх | Ретро Бит. Акт 7 | Ретро Бит (7 of 10) |
-| 2026 | 2.00 | 2 | 884716 | Наталья Сергеевна Филимонова | Нет предела сове… |  |
-| 2026 | 3.68 | 31 | 883868 | Екатерина Насута | Кицхен готовится к войне | Такие странные Каэр (2 of 3) |
-| 2026 | 2.00 | 1 | 883738 | Анна Шнайдер | Я тебя не предам |  |
 | 2026 | 3.62 | 34 | 883585 | Павел Сергеевич Иевлев | Беги за мёртвым кроликом |  |
-| 2026 | 3.71 | 21 | 883445 | Роман Г. Артемьев | Война | Песня штормов (3 of 3) |
-| 2026 | 2.67 | 3 | 883166 | Кирилл Сергеевич Клеванский | Матабар X | Матабар (10 of 11) |
-| 2026 | 5.00 | 1 | 881573 | Милена Валерьевна Завойчинская | Отпуск. Диета. Ведьмак на подхвате | Хочу в отпуск (number not known) |
+| 2026 |  | 0 | 883365 | Евгений Юрьевич Лукин | Покойся с миром | Лыцк, Баклужино, Суслов (26 of 27) |
+| 2026 | 3.73 | 59 | 881151 | Инди Видум | Прорыв | Петя и Валерон (9 of 11) |
+| 2026 | 5.00 | 1 | 879262 | Евгений Юрьевич Лукин | Притча Рамакришны | Лыцк, Баклужино, Суслов (25 of 27) |
+| 2026 | 5.00 | 2 | 877262 | Евгений Юрьевич Лукин | Торнадо | Лыцк, Баклужино, Суслов (24 of 27) |
+| 2026 | 3.67 | 66 | 875658 | Инди Видум | Вызов | Петя и Валерон (8 of 11) |
+| 2026 | 4.00 | 3 | 874820 | Евгений Юрьевич Лукин | Божьи твари | Лыцк, Баклужино, Суслов (23 of 27) |
+| 2026 | 4.33 | 3 | 872159 | Евгений Юрьевич Лукин | Диктант | Лыцк, Баклужино, Суслов (22 of 27) |
+| 2026 | 4.11 | 28 | 872048 | Тата Алатова | Соломенное сердце |  |
+| 2026 | 4.08 | 95 | 870350 | Сергей Сергеевич Мусаниф | Участь динозавров |  |
+| 2026 | 5.00 | 1 | 868478 | Евгений Юрьевич Лукин | Загранкомандировка | Лыцк, Баклужино, Суслов (21 of 27) |
+| 2026 | 4.56 | 43 | 868351 | Тата Алатова | Неисправная Анна. Книга 2 | Неисправная Анна (2 of 2) |
+| 2026 | 3.70 | 63 | 868033 | Инди Видум | Встреча | Петя и Валерон (7 of 11) |
+| 2026 | 3.78 | 32 | 867489 | Марина Ефиминюк | Трудности перевода с драконьего | Драконовы невесты (2 of 3) |
+| 2026 | 3.40 | 5 | 866881 | Анна Сергеевна Одувалова, Марина Ефиминюк | Самый желанный приз |  |
+| 2026 | 4.00 | 2 | 866126 | Евгений Юрьевич Лукин | Алхимия в чистом виде | Лыцк, Баклужино, Суслов (20 of 27) |
+| 2026 | 4.50 | 2 | 865008 | Евгений Юрьевич Лукин | Не судьба | Лыцк, Баклужино, Суслов (19 of 27) |
+| 2026 | 3.17 | 6 | 862831 | Евгений Юрьевич Лукин | Убедил |  |
+| 2026 | 3.83 | 82 | 862517 | Инди Видум | Набор | Петя и Валерон (6 of 11) |
+| 2026 | 4.50 | 2 | 860851 | Евгений Юрьевич Лукин | Город Крыж | Лыцк, Баклужино, Суслов (18 of 27) |
+| 2026 | 4.05 | 22 | 860696 | Павел Сергеевич Иевлев | Ковыряла 2 | Туман и неон (2 of 4) |
+| 2026 | 4.20 | 5 | 859340 | Евгений Юрьевич Лукин | Случай в Липовом проезде | Лыцк, Баклужино, Суслов (17 of 27) |
+| 2026 | 4.02 | 85 | 856625 | Инди Видум | Ресурс | Петя и Валерон (5 of 11) |
+| 2025 | 3.00 | 3 | 853974 | Евгений Юрьевич Лукин | Покаяние | Лыцк, Баклужино, Суслов (16 of 27) |
+| 2025 | 4.10 | 83 | 850790 | Инди Видум | Отход | Петя и Валерон (4 of 11) |
+| 2025 | 3.00 | 1 | 849493 | Ирина Владимировна Котова | Королевская кровь-13. Часть 2 | Королевская кровь [Котова] (15 of 15) |
+| 2025 | 3.33 | 3 | 849491 | Ирина Владимировна Котова | Вороново сердце. Часть 2 | Королевская кровь [Котова] (13 of 15) |
+| 2025 | 4.00 | 3 | 849492 | Ирина Владимировна Котова | Королевская кровь-13. Часть 1 | Королевская кровь [Котова] (14 of 15) |
+| 2025 | 3.67 | 3 | 849490 | Ирина Владимировна Котова | Вороново сердце. Часть 1 | Королевская кровь [Котова] (12 of 15) |
+| 2025 | 3.86 | 80 | 845112 | Инди Видум | Слияние | Петя и Валерон (3 of 11) |
+| 2025 | 4.00 | 3 | 845014 | Евгений Юрьевич Лукин | Ограбление по-нашенски |  |
+| 2025 | 3.58 | 45 | 843401 | Павел Сергеевич Иевлев | Нарратив Аллокатора |  |
+| 2025 | 3.60 | 5 | 842691 | Евгений Юрьевич Лукин | По краешку |  |
+| 2025 | 3.88 | 51 | 841851 | Тата Алатова | Тетушка против |  |
+| 2025 | 3.81 | 89 | 841462 | Инди Видум | Искра | Петя и Валерон (2 of 11) |
 
 ### New for me
 
-The 20 best eligible books by other authors that I have not labelled, by the best model (**rb+s+lm+i2i+c**). Candidates: downloaded books with at least 5 votes and an average of 3 or more (463 books). Each score comes from models that never saw the book or its author.
+The 20 best eligible books by other authors that I have not labelled, by the best model (**rb+s+lm+i2i+c**). Candidates: downloaded books with at least 5 votes and an average of 3 or more (432 books). Each score comes from models that never saw the book or its author.
 
 | Score | Rating | Votes | Comments | Key | Author | Title | Series | Genre groups |
 | --- | --- | --- | --- | --- | --- | --- | --- | --- |
-| 0.87 | 4.32 | 47 | 22 | 712101 | Маргарита Александровна Гришаева | Приворот на василиска |  | romantic fantasy, contemporary romance |
-| 0.80 | 4.03 | 59 | 26 | 619223 | Яна Лисканова | План по соблазнению герцога (СИ) | Записки милых дам (1 of 2) | romantic fantasy, humour, web literature |
-| 0.80 | 3.97 | 151 | 98 | 750889 | Александр Н. Александров | Следователь | Фигаро, следователь Департамента Других Дел (1 of 8) | detective, fantasy, science fiction, web literature |
-| 0.80 | 4.17 | 113 | 33 | 577074 | Марина Суржевская | Королевство Бездуш. Lastfata | Королевство Бездуш (2 of 2) | romantic fantasy |
-| 0.79 | 3.97 | 117 | 50 | 877320 | Владимир Ильин | Черновик для Эффы | Лекарство для Эффы (1 of 5) | web literature, popadantsy, humour |
 | 0.79 | 4.32 | 340 | 68 | 150905 | Ольга Громыко | Год Крысы. Видунья | Год Крысы (1 of 2) | fantasy |
-| 0.79 | 3.72 | 240 | 152 | 620295 | Дмитрий Олегович Смекалин | Господин маг | Господин маг (1 of 3) | fantasy |
-| 0.79 | 4.18 | 99 | 53 | 575529 | Кира Алиевна Измайлова | Старое платье королевы |  | romantic fantasy |
-| 0.77 | 4.37 | 338 | 50 | 352100 | Руслан Алексеевич Михайлов | Ярость богов | Мир Вальдиры (number not known) | litrpg |
+| 0.79 | 4.03 | 59 | 26 | 619223 | Яна Лисканова | План по соблазнению герцога (СИ) | Записки милых дам (1 of 2) | romantic fantasy, humour, web literature |
+| 0.78 | 4.17 | 113 | 33 | 577074 | Марина Суржевская | Королевство Бездуш. Lastfata | Королевство Бездуш (2 of 2) | romantic fantasy |
+| 0.77 | 3.72 | 240 | 152 | 620295 | Дмитрий Олегович Смекалин | Господин маг | Господин маг (1 of 3) | fantasy |
+| 0.77 | 4.06 | 213 | 106 | 546689 | Дана Арнаутова | Стальной подснежник |  | romantic fantasy |
+| 0.77 | 3.58 | 103 | 44 | 602417 | Нинель Мягкова | Отборная бабушка |  | romantic fantasy, humour, web literature, fantasy, popadantsy |
+| 0.77 | 4.25 | 64 | 28 | 741494 | Татьяна Владимировна Солодкова | Душа королевского замка |  | romantic fantasy, web literature |
 | 0.76 | 4.14 | 73 | 31 | 789434 | Яна Ясная | Секс и ничего личного |  | romantic fantasy, erotica, web literature |
-| 0.75 | 3.66 | 86 | 34 | 612428 | Оксана Чекменёва | Целительница моей души |  | romantic fantasy, web literature, fantasy |
+| 0.75 | 4.37 | 59 | 22 | 860219 | Екатерина Насута | Эльфийский сыр | Эльфийский бык (2 of 3) | fantasy, humour |
+| 0.74 | 3.83 | 122 | 29 | 789343 | Алексей Витальевич Осадчук | Закон Силы | Последняя жизнь (7 of 13) | web literature, fantasy, popadantsy |
+| 0.74 | 3.88 | 65 | 17 | 687368 | Марианна Красовская | Дух воина | Люди огня (1 of 4) | romantic fantasy |
 | 0.74 | 3.99 | 72 | 27 | 648543 | Анна Орлова | Овсянка, мэм! | Детектив, мэм! (1 of 4) | detective |
 | 0.74 | 4.14 | 525 | 85 | 156339 | Алекс Кош | Огненный Факультет | Ремесло (1 of 4) | fantasy |
-| 0.74 | 3.66 | 64 | 28 | 807324 | Полина Ром | Усадьба леди Анны |  | romantic fantasy, web literature, fantasy |
-| 0.74 | 4.00 | 38 | 22 | 793249 | Анна Сергеевна Платунова | Заклятие на любовь |  | romantic fantasy |
-| 0.73 | 3.83 | 52 | 20 | 603576 | Кристина Леола | Честная сделка | Аделхайд (number not known) | humour, romantic fantasy, web literature |
-| 0.73 | 3.83 | 122 | 29 | 789343 | Алексей Витальевич Осадчук | Закон Силы | Последняя жизнь (7 of 13) | web literature, fantasy, popadantsy |
-| 0.73 | 3.83 | 46 | 20 | 772979 | Джейд Дэвлин | Микрофон на цепи | Попаданка и ее айдолы (1 of 5) | web literature, popadantsy, fantasy, romantic fantasy |
 | 0.73 | 3.75 | 103 | 52 | 792571 | Олег Николаевич Борисов | Иванов-сан | Русский Дзайбацу (1 of 1) | fantasy, science fiction, web literature |
-| 0.73 | 3.82 | 60 | 31 | 788071 | Алёна Дмитриевна Селютина | И жили они долго и счастливо | Долго и счастливо [Селютина] (1 of 6) | fantasy |
+| 0.73 | 4.00 | 38 | 22 | 793249 | Анна Сергеевна Платунова | Заклятие на любовь |  | romantic fantasy |
+| 0.73 | 3.83 | 52 | 20 | 603576 | Кристина Леола | Честная сделка | Аделхайд (number not known) | humour, romantic fantasy, web literature |
+| 0.73 | 3.83 | 46 | 20 | 772979 | Джейд Дэвлин | Микрофон на цепи | Попаданка и ее айдолы (1 of 5) | web literature, popadantsy, fantasy, romantic fantasy |
+| 0.73 | 3.66 | 64 | 28 | 807324 | Полина Ром | Усадьба леди Анны |  | romantic fantasy, web literature, fantasy |
+| 0.73 | 3.75 | 454 | 225 | 296597 | Вадим Владимирович Денисов | Замок Россия | Стратегия [Денисов] (1 of 11) | science fiction |
+| 0.72 | 4.19 | 153 | 77 | 531107 | Артем Каменистый | Существование | Трэш (1 of 2) | science fiction, fantasy, popadantsy |
 
 ## The real test of Decision 1: my answers in the "New books" tab
 
-The queue of the tab is rebuilt by every run of this report: 100 books the best model scores highest and 100 books picked at random from the 498 eligible candidates, mixed together; the page does not show which is which, and every answer stores the half the book came from. Average score: 0.66 in the top half, 0.39 in the random half.
+The queue of the tab is rebuilt by every run of this report: 100 books the best model scores highest and 100 books picked at random from the 442 eligible candidates, mixed together; the page does not show which is which, and every answer stores the half the book came from. Average score: 0.61 in the top half, 0.39 in the random half.
 
-> **Skipped: 0 new answers so far; the comparison needs at least 60.** Answer books with `npm run label`, then run `npm run funnel` again. The earlier answers were given before the queue had two halves, so they cannot be used here.
+> **Skipped: 55 new answers so far; the comparison needs at least 60.** Answer books with `npm run label`, then run `npm run funnel` again. The earlier answers were given before the queue had two halves, so they cannot be used here.
