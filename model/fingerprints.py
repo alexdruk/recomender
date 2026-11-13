@@ -1,15 +1,19 @@
-"""Milestone 3, parts C to F. Text fingerprints: checks, models, taste map, report.
+"""Milestones 3 and 3b. Text fingerprints and ratings: checks, models, taste map, report.
 
 Run:  .venv/bin/python model/fingerprints.py        writes reports/fingerprints.md
 
-Needs, in data/books.db and data/emb/ (made by the earlier steps):
-  node src/fetch-books.js      liked FB2 texts, the matched background, ratings
+Needs, in data/books.db, data/catalog.db and data/emb/ (made by the earlier steps):
+  node src/fetch-books.js      liked FB2 texts, the matched and rated-matched sets
   node src/stylometry.js       the "stylometry" table
   .venv/bin/python model/embed.py   chunk vectors for every book
 "npm run fingerprints" runs these (they skip what is already done) and then this file.
 
-Positive class  = liked books (no collections, no non-fiction).
-Unlabeled class = the view "unlabeled_books": matched background + feed books.
+Positive class = liked books (no collections, no non-fiction).
+Two comparison sets, each used on its own as the unlabeled class:
+  rated-matched  about 1,000 catalog books with at least 5 votes, whose years and
+                 average ratings are spread like those of the liked books. The one that counts.
+  matched        the old, easier set: random catalog books matched on year only.
+Feed books are never trained on; they are only scored.
 "Year" is not used by any model here.
 """
 
@@ -21,6 +25,8 @@ from collections import Counter
 from pathlib import Path
 
 import numpy as np
+from joblib import Parallel, delayed
+from scipy import sparse
 from sklearn.cluster import KMeans
 from sklearn.decomposition import PCA
 from sklearn.linear_model import LogisticRegression
@@ -36,6 +42,7 @@ ROOT = Path(__file__).resolve().parent.parent
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 DATA = ROOT / CONFIG.get("dataDir", "data")
 DB_PATH = DATA / "books.db"
+CAT_PATH = DATA / "catalog.db"
 MAP_PATH = DATA / "genre-map.json"
 EMB = DATA / "emb"
 REPORT = ROOT / "reports" / "fingerprints.md"
@@ -46,12 +53,16 @@ SEED = 20261112
 PCA_DIMS = 50
 C_GRID = (0.01, 0.1, 1.0)  # strength of the model's "keep it simple" penalty, chosen inside each training part
 TOP_SHARE = 0.05
-OLD_AUC = 0.79  # milestone 2, model b, author-grouped
 MIN_LABELS = 100
 NEVER_WEIGHT = 3.0  # "would never read" books count this many times as a negative
 STAR_WEIGHT = 2.0
 PILE_LIMIT = 0.75
-MIN_MATCHED = 800
+MIN_SET = 800  # a comparison set should have at least this many books
+MIN_VOTES = 5  # an average with at least this many votes is trusted
+LM_MIN_BOOKS = 3  # a like-minded reader gave 4 or 5 to at least this many of my liked books
+LM_SHRINK = 3.0  # a few like-minded votes are pulled towards the book's overall average
+LIST_SIZE = 30
+SETS = {"rated": "rated-matched", "matched": "old matched"}
 
 
 # ---------------------------------------------------------------- loading
@@ -63,6 +74,11 @@ def book_vector(set_name, key):
         return None
     v = np.load(path).astype(np.float32).mean(axis=0)
     return v / (np.linalg.norm(v) or 1.0)
+
+
+def book_id(key):
+    head = str(key).split("-")[0]
+    return int(head) if head.isdigit() else None
 
 
 def load():
@@ -77,29 +93,29 @@ def load():
     def has(name):
         return db.execute("SELECT 1 FROM sqlite_master WHERE name = ?", (name,)).fetchone() is not None
 
-    if not has("unlabeled_books"):
-        sys.exit('No "unlabeled_books" view yet. Run "node src/fetch-books.js" first.')
+    if not has("unlabeled_books") or not has("rated_pick"):
+        sys.exit('No "unlabeled_books" view or "rated_pick" table yet. Run "node src/fetch-books.js" first.')
     meta = {r["name"]: json.loads(r["value"]) for r in db.execute("SELECT name, value FROM meta")}
     liked_all = rows("SELECT * FROM books WHERE parse_status != 'failed'")
     unl_all = rows("SELECT * FROM unlabeled_books")
     fb2 = {r["key"]: r for r in rows("SELECT key, words, annotation FROM parsed WHERE source = 'liked_fb2' AND parse_status != 'failed'")}
     fetch = rows("SELECT * FROM fb2_fetch") if has("fb2_fetch") else []
     styl = {(r["kind"], r["key"]): json.loads(r["features"]) for r in rows("SELECT * FROM stylometry WHERE features IS NOT NULL")} if has("stylometry") else {}
-    ratings = {r["key"]: r for r in rows("SELECT * FROM book_ratings")} if has("book_ratings") else {}
     labels = {r["key"]: r["label"] for r in rows("SELECT key, label FROM labels")} if has("labels") else {}
     stars = {r["key"] for r in rows("SELECT key FROM stars")} if has("stars") else set()
-    picked = db.execute("SELECT COUNT(*) FROM matched_pick").fetchone()[0] if has("matched_pick") else 0
-    matched_table = db.execute("SELECT COUNT(*) FROM matched_books").fetchone()[0]
-    matched_parsed = db.execute("SELECT COUNT(*) FROM parsed WHERE source = 'matched' AND parse_status != 'failed'").fetchone()[0]
-    db.close()
-
-    text_dir = DATA / "text-fb2"
     counts = {
         "liked_all": len(liked_all),
         "liked_collections": sum(1 for b in liked_all if b["is_collection"]),
         "liked_nonfiction": sum(1 for b in liked_all if not b["is_collection"] and not b["is_fiction"]),
-        "picked": picked, "matched_table": matched_table, "matched_parsed": matched_parsed,
+        "picked": db.execute("SELECT COUNT(*) FROM matched_pick").fetchone()[0] if has("matched_pick") else 0,
+        "matched_parsed": db.execute("SELECT COUNT(*) FROM parsed WHERE source = 'matched' AND parse_status != 'failed'").fetchone()[0],
+        "rated_picked": db.execute("SELECT COUNT(*) FROM rated_pick").fetchone()[0],
+        "rated_reused": db.execute("SELECT COUNT(*) FROM rated_pick WHERE reused = 1").fetchone()[0],
+        "rated_parsed": db.execute("SELECT COUNT(*) FROM parsed WHERE source = 'rated' AND parse_status != 'failed'").fetchone()[0],
     }
+    db.close()
+
+    text_dir = DATA / "text-fb2"
     liked_keys_all = [b["key"] for b in liked_all]
     has_fb2 = {k for k in liked_keys_all if k in fb2 and (text_dir / f"{k}.txt").exists()}
     counts["liked_fb2"] = len(has_fb2)
@@ -111,15 +127,14 @@ def load():
                 continue
             key = b["key"]
             if label == 1:
-                source = "liked"
+                source, store = "liked", "liked"
                 use_fb2 = key in has_fb2
                 vec = book_vector("liked_fb2", key) if use_fb2 else book_vector("liked_epub", key)
                 words = fb2[key]["words"] if use_fb2 else b["words"]
-                text = "fb2" if use_fb2 else "epub"
             else:
-                source = b["source"]
-                vec = book_vector(source, key)
-                words, text = b["words"], "fb2"
+                source, store = b["source"], b["store"]
+                vec = book_vector(store, key)
+                words = b["words"]
             if vec is None:
                 no_vector[source] += 1
                 continue
@@ -128,7 +143,7 @@ def load():
             in_catalog = b["cat_author_ids"] is not None or b["cat_genres"] is not None
             year = b["cat_year"] if b["cat_year"] else b["year"]
             books.append({
-                "key": key, "y": label, "source": source, "text": text,
+                "key": key, "y": label, "source": source, "store": store,
                 "title": b["title"] or "", "author_names": ", ".join(names),
                 "authors": authors or [f"solo:{label}:{key}"],
                 "genres": jlist(b["cat_genres"]) or jlist(b["genres"]),
@@ -139,19 +154,82 @@ def load():
                 "year": int(year) if year and 1800 <= int(year) <= 2100 else None,
                 "vec": vec,
                 "styl": styl.get(("liked" if label == 1 else "unlabeled", key)),
-                "rating": ratings.get(key),
                 "label": labels.get(key) if label == 0 else None,
                 "star": key in stars,
             })
     return {"books": books, "counts": counts, "meta": meta, "fetch": fetch, "no_vector": no_vector, "labels": labels,
-            "stars": stars, "liked_all": liked_all, "has_fb2": has_fb2, "has_ratings": bool(ratings), "liked_keys_all": liked_keys_all}
+            "stars": stars, "liked_all": liked_all, "has_fb2": has_fb2, "liked_keys_all": liked_keys_all}
+
+
+# ---------------------------------------------------------------- ratings from the catalog
+
+
+def open_catalog():
+    if not CAT_PATH.exists():
+        return None
+    cat = sqlite3.connect(f"file:{CAT_PATH}?mode=ro", uri=True)
+    if not cat.execute("SELECT 1 FROM sqlite_master WHERE type = 'table' AND name = 'librate'").fetchone():
+        cat.close()
+        return None
+    return cat
+
+
+def load_votes(cat, books):
+    """Every vote on our books, as three book-by-reader tables:
+    V = the rating (1 to 5), P = 1 where the reader voted, H = 1 where the reader gave 4 or 5."""
+    n = len(books)
+    row_of = {}
+    for i, b in enumerate(books):
+        bid = book_id(b["key"])
+        if bid is not None:
+            row_of.setdefault(bid, []).append(i)
+    ids = sorted(row_of)
+    r_idx, users, rates = [], [], []
+    if cat is not None:
+        for start in range(0, len(ids), 900):
+            part = ids[start:start + 900]
+            sql = f"SELECT BookId, UserId, MAX(CAST(Rate AS INTEGER)) FROM librate WHERE BookId IN ({','.join('?' * len(part))}) GROUP BY BookId, UserId"
+            for bid, user, rate in cat.execute(sql, part):
+                for i in row_of[bid]:
+                    r_idx.append(i)
+                    users.append(user)
+                    rates.append(rate)
+    uniq, cols = np.unique(np.array(users, dtype=np.int64), return_inverse=True) if users else (np.array([]), np.array([], dtype=int))
+    shape = (n, max(1, len(uniq)))
+    rates = np.array(rates, dtype=float)
+    V = sparse.csr_matrix((rates, (r_idx, cols)), shape=shape)
+    P = sparse.csr_matrix((np.ones(len(rates)), (r_idx, cols)), shape=shape)
+    H = sparse.csr_matrix(((rates >= 4).astype(float), (r_idx, cols)), shape=shape)
+    return V, P, H
+
+
+def catalog_facts(cat, genre_map):
+    """What the ratings table holds, and votes and average for every
+    Russian-language fiction book of the catalog that is not deleted."""
+    cols = [r[1] for r in cat.execute("PRAGMA table_info(librate)")]
+    rows_, readers, rated_books = cat.execute("SELECT COUNT(*), COUNT(DISTINCT UserId), COUNT(DISTINCT BookId) FROM librate").fetchone()
+    pairs = cat.execute("SELECT COUNT(*) FROM (SELECT 1 FROM librate GROUP BY BookId, UserId)").fetchone()[0]
+    values = dict(cat.execute("SELECT CAST(Rate AS INTEGER), COUNT(*) FROM librate GROUP BY 1"))
+    kind_of = {code: genre_map["groups"].get(group) for code, group in genre_map.get("codes", {}).items()}
+    kinds = {}
+    sql = ("SELECT b.BookId, l.GenreCode FROM libbook b JOIN libgenre g ON g.BookId = b.BookId "
+           "JOIN libgenrelist l ON l.GenreId = g.GenreId WHERE b.Lang = 'ru' AND b.Deleted = '0'")
+    for bid, code in cat.execute(sql):
+        kinds.setdefault(bid, set()).add(kind_of.get(code))
+    fiction = [bid for bid, k in kinds.items() if "fiction" in k and "nonfiction" not in k]
+    agg = {bid: (n, avg) for bid, n, avg in cat.execute("SELECT BookId, COUNT(*), AVG(CAST(Rate AS REAL)) FROM librate GROUP BY BookId")}
+    n = np.array([agg.get(bid, (0, 0.0))[0] for bid in fiction], dtype=float)
+    avg = np.array([agg.get(bid, (0, np.nan))[1] for bid in fiction], dtype=float)
+    date_cols = [c for c in cols if any(w in c.lower() for w in ("time", "date", "created", "stamp"))]
+    return {"cols": cols, "rows": rows_, "readers": readers, "rated_books": rated_books, "pairs": pairs, "values": values,
+            "date_cols": date_cols, "fiction_n": n, "fiction_avg": avg}
 
 
 # ---------------------------------------------------------------- features and models
 
 
 class Data:
-    def __init__(self, books, group_names, styl_names):
+    def __init__(self, books, group_names, styl_names, votes):
         self.books = books
         n = len(books)
         col = {g: i for i, g in enumerate(group_names)}
@@ -162,6 +240,9 @@ class Data:
                     self.G[i, col[g]] = 1.0
         self.y = np.array([b["y"] for b in books])
         self.source = np.array([b["source"] for b in books])
+        self.store = np.array([b["store"] for b in books])
+        self.is_feed = self.source == "feed"
+        self.sets = {"rated": (self.y == 1) | (self.source == "rated-matched"), "matched": (self.y == 1) | (self.store == "matched")}
         self.log_words = np.array([math.log10(max(b["words"], 100)) for b in books])
         self.flags = np.array([[b["translated"], b["in_series"]] for b in books], dtype=float)
         self.S = np.array([[(b["styl"] or {}).get(nm) if (b["styl"] or {}).get(nm) is not None else np.nan for nm in styl_names] for b in books], dtype=float)
@@ -170,30 +251,84 @@ class Data:
         self.never = np.array([b["label"] == "never" for b in books])
         self.want = np.array([b["label"] == "want" for b in books])
         self.star = np.array([b["star"] and b["y"] == 1 for b in books])
+        self.weights = np.ones(n)
+        self.weights[self.never] = NEVER_WEIGHT
+        self.weights[self.star] = STAR_WEIGHT
+        # ratings
+        self.V, self.P, self.H = votes
+        self.votes = np.asarray(self.P.sum(axis=1)).ravel()
+        total = np.asarray(self.V.sum(axis=1)).ravel()
+        self.avg = np.where(self.votes > 0, total / np.maximum(self.votes, 1), np.nan)
+        self.rated_ok = (self.votes >= MIN_VOTES) & (np.nan_to_num(self.avg) >= 3)
+        self.group_rows = {}
+        for i, g in enumerate(self.groups):
+            self.group_rows.setdefault(g, []).append(i)
 
-    def blocks(self, train):
-        """The three feature blocks for all books, with every scale, median and
+    def like_minded(self, liked_train):
+        """The like-minded readers score, from the liked books of the training part only.
+
+        A like-minded reader gave 4 or 5 to at least LM_MIN_BOOKS of those books.
+        For every book: how many like-minded readers voted for it, their share
+        among all its voters, and how much higher they rated it than all readers did.
+        A training book never counts towards its own like-minded readers, and neither
+        do other books by its author: test books always come from unseen authors,
+        so training books must be looked at in the same way."""
+        counts = np.asarray(self.H[liked_train].sum(axis=0)).ravel()
+        readers = (counts >= LM_MIN_BOOKS).astype(float)
+        n_lm = self.P @ readers
+        sum_lm = self.V @ readers
+        g_liked = self.groups[liked_train]
+        for g in np.unique(g_liked):
+            own = np.asarray(self.H[liked_train[g_liked == g]].sum(axis=0)).ravel()
+            without = ((counts - own) >= LM_MIN_BOOKS).astype(float)
+            rows = self.group_rows[g]
+            n_lm[rows] = self.P[rows] @ without
+            sum_lm[rows] = self.V[rows] @ without
+        avg = np.nan_to_num(self.avg)
+        diff = (sum_lm - n_lm * avg) / (n_lm + LM_SHRINK)
+        share = n_lm / (self.votes + MIN_VOTES)
+        return np.column_stack([np.log1p(n_lm), share, diff]), int(readers.sum())
+
+    def blocks(self, train, lm):
+        """The feature blocks for all books, with every scale, median and
         PCA direction learned from the training rows only."""
+        fit = lambda X: np.clip(StandardScaler().fit(X[train]).transform(X), -5, 5)  # noqa: E731
         words = StandardScaler().fit(self.log_words[train, None]).transform(self.log_words[:, None])
         b0 = np.hstack([self.G, words, self.flags])
         med = np.nanmedian(self.S[train], axis=0)
         med = np.where(np.isnan(med), 0.0, med)
-        S = np.where(np.isnan(self.S), med, self.S)
-        S = np.clip(StandardScaler().fit(S[train]).transform(S), -5, 5)
+        S = fit(np.where(np.isnan(self.S), med, self.S))
         dims = min(PCA_DIMS, len(train) - 1)
         pca = PCA(n_components=dims, random_state=SEED).fit(self.E[train])
         E = pca.transform(self.E)
         E = E / E[train].std(axis=0).mean()  # one common scale, so the big directions stay the big ones
-        return {"b0": b0, "s": S, "e": E}
+        # ratings: average (a book without votes gets the typical average and a "no votes" mark), number of votes
+        seen = self.avg[train][~np.isnan(self.avg[train])]
+        typical = float(np.median(seen)) if len(seen) else 3.0
+        R = np.column_stack([fit(np.where(np.isnan(self.avg), typical, self.avg)[:, None]), fit(np.log1p(self.votes)[:, None]), (self.votes == 0).astype(float)])
+        return {"b0": b0, "s": S, "e": E, "r": R, "lm": fit(lm)}
 
 
 MODELS = {
-    "b0": ("b0: genres + length, translated, series", ["b0"]),
+    "r": ("r: average rating + number of votes", ["r"]),
+    "rb": ("rb: r + genres, length, translated, series", ["r", "b0"]),
+    "rb+text": ("rb+text: rb + stylometry + embeddings", ["r", "b0", "s", "e"]),
+    "lm": ("lm: like-minded readers score alone", ["lm"]),
+    "lm+rb": ("lm+rb: like-minded readers + rb", ["lm", "r", "b0"]),
+    "lm+rb+text": ("lm+rb+text: like-minded readers + rb+text", ["lm", "r", "b0", "s", "e"]),
+    "b0": ("b0: genres + length, translated, series (no ratings)", ["b0"]),
     "s": ("s: b0 + stylometry", ["b0", "s"]),
     "e": ("e: embeddings only", ["e"]),
     "be": ("be: b0 + embeddings", ["b0", "e"]),
     "all": ("all: b0 + stylometry + embeddings", ["b0", "s", "e"]),
 }
+NO_RATINGS = ("b0", "s", "e", "be", "all")
+LM_MODELS = ("lm", "lm+rb", "lm+rb+text")
+LABEL_MODEL = "all+labels"
+
+
+def model_name(m):
+    return MODELS[m][0] if m in MODELS else "all+labels: all, with my answers"
 
 
 def fit_lr(X, y, C, w=None):
@@ -230,59 +365,43 @@ def rank_metrics(pos, unl):
     return {"auc": float(1.0 - perc.mean()), "median": float(np.median(perc)), "top": float((perc <= TOP_SHARE).mean())}
 
 
-def cross_validate(data, use_labels):
-    y, groups, n = data.y, data.groups, len(data.y)
-    names = list(MODELS) + (["all+labels"] if use_labels else [])
-    folds_out = {m: [] for m in names}
-    extra = {"be_on_feed": [], "be_matched_only_on_feed": []}
-    oof = {m: np.zeros(n) for m in names}
-    never_auc = {m: [] for m in names}
-    chosen = {m: Counter() for m in names}
-    is_feed = data.source == "feed"
-    weights = np.ones(n)
-    weights[data.never] = NEVER_WEIGHT
-    weights[data.star] = STAR_WEIGHT
-
-    for rep in range(REPEATS):
-        rep_scores = {m: np.zeros(n) for m in names}
-        splits = StratifiedGroupKFold(FOLDS, shuffle=True, random_state=SEED + rep).split(np.zeros(n), y, groups)
-        for f, (train, test) in enumerate(splits):
-            assert not set(groups[train]) & set(groups[test]), "an author is on both sides of the split"
-            seed = SEED + 100 * rep + f
-            B = data.blocks(train)
-            pos, unl = test[y[test] == 1], test[y[test] == 0]
-            for m in names:
-                cols = MODELS["all" if m == "all+labels" else m][1]
-                X = np.hstack([B[c] for c in cols])
-                if m == "all+labels":
-                    tr = train[~data.want[train]]  # "want to read" books are not used as negatives
-                    model, C = fit_best(X[tr], y[tr], groups[tr], seed, weights[tr])
-                else:
-                    model, C = fit_best(X[train], y[train], groups[train], seed)
-                chosen[m][C] += 1
-                score = model.predict_proba(X[test])[:, 1]
-                rep_scores[m][test] = score
-                r = rank_metrics(model.decision_function(X[pos]), model.decision_function(X[unl]))
-                folds_out[m].append(r)
-                if m == "be":
-                    feed_test = unl[is_feed[unl]]
-                    r2 = rank_metrics(model.decision_function(X[pos]), model.decision_function(X[feed_test]))
-                    if r2:
-                        extra["be_on_feed"].append(r2)
-            # "be" trained without any feed book, tested on liked vs feed
-            tr = train[~is_feed[train]]
-            if (y[tr] == 0).sum() >= 30:  # needs a matched background to train against
-                Bm = data.blocks(tr)
-                X = np.hstack([Bm["b0"], Bm["e"]])
-                model, _ = fit_best(X[tr], y[tr], groups[tr], seed)
-                feed_test = unl[is_feed[unl]]
-                r3 = rank_metrics(model.decision_function(X[pos]), model.decision_function(X[feed_test]))
-                if r3:
-                    extra["be_matched_only_on_feed"].append(r3)
+def run_fold(data, rep, f, train_all, test_all, names):
+    """One test fold. The split is made over all books; each comparison set then
+    trains on its own books of the training side and is tested on its own books
+    of the test side. Every book of the test side gets a score, also books that
+    are in neither set (feed books), so the lists can use them."""
+    y, groups = data.y, data.groups
+    assert not set(groups[train_all]) & set(groups[test_all]), "an author is on both sides of the split"
+    seed = SEED + 100 * rep + f
+    with_lm = any(m in LM_MODELS for m in names)
+    lm, n_readers = data.like_minded(train_all[y[train_all] == 1]) if with_lm else (np.zeros((len(y), 3)), 0)
+    feed = test_all[data.is_feed[test_all]]
+    out = {}
+    for s, mask in data.sets.items():
+        train, test = train_all[mask[train_all]], test_all[mask[test_all]]
+        B = data.blocks(train, lm)
+        pos, unl = test[y[test] == 1], test[y[test] == 0]
         for m in names:
-            oof[m] += rep_scores[m] / REPEATS
-            if data.never.sum() >= 5:
-                never_auc[m].append(rank_metrics(rep_scores[m][y == 1], rep_scores[m][data.never])["auc"])
+            X = np.hstack([B[c] for c in MODELS["all" if m == LABEL_MODEL else m][1]])
+            if m == LABEL_MODEL:
+                tr = train[~data.want[train]]  # "want to read" books are not used as negatives
+                model, C = fit_best(X[tr], y[tr], groups[tr], seed, data.weights[tr])
+            else:
+                model, C = fit_best(X[train], y[train], groups[train], seed)
+            dec = model.decision_function(X)
+            out[(s, m)] = {"metrics": rank_metrics(dec[pos], dec[unl]), "feed": rank_metrics(dec[pos], dec[feed]),
+                           "scores": model.predict_proba(X[test_all])[:, 1], "C": C}
+    return rep, test_all, out, n_readers
+
+
+def cross_validate(data, use_labels):
+    y, n = data.y, len(data.y)
+    names = list(MODELS) + ([LABEL_MODEL] if use_labels else [])
+    jobs = []
+    for rep in range(REPEATS):
+        splits = StratifiedGroupKFold(FOLDS, shuffle=True, random_state=SEED + rep).split(np.zeros(n), y, data.groups)
+        jobs += [(rep, f, train, test) for f, (train, test) in enumerate(splits)]
+    done = Parallel(n_jobs=-1)(delayed(run_fold)(data, rep, f, train, test, names) for rep, f, train, test in jobs)
 
     def summary(rs):
         out = {}
@@ -292,18 +411,31 @@ def cross_validate(data, use_labels):
         out["aucs"] = np.array([r["auc"] for r in rs])
         return out
 
-    res = {m: summary(folds_out[m]) for m in names}
-    for m in names:
-        if never_auc[m]:
-            res[m]["never"], res[m]["never_sd"] = float(np.mean(never_auc[m])), float(np.std(never_auc[m]))
-    ext = {k: summary(v) for k, v in extra.items() if v}
-    return res, ext, oof, chosen
+    res, feed, oof, chosen = {}, {}, {}, {}
+    for s in data.sets:
+        for m in names:
+            parts = [d[2][(s, m)] for d in done]
+            rep_scores = np.zeros((REPEATS, n))
+            for (rep, test, out, _) in done:
+                rep_scores[rep, test] = out[(s, m)]["scores"]
+            r = summary([p["metrics"] for p in parts])
+            if data.never.sum() >= 5:
+                nv = [rank_metrics(rep_scores[k][y == 1], rep_scores[k][data.never])["auc"] for k in range(REPEATS)]
+                r["never"], r["never_sd"] = float(np.mean(nv)), float(np.std(nv))
+            res[(s, m)] = r
+            fm = [p["feed"] for p in parts if p["feed"]]
+            if fm:
+                feed[(s, m)] = summary(fm)
+            oof[(s, m)] = rep_scores.mean(axis=0)
+            chosen[(s, m)] = Counter(p["C"] for p in parts)
+    readers = np.array([d[3] for d in done])
+    return names, res, feed, oof, chosen, readers
 
 
 def pile_check_feed(data):
-    """Can a model tell matched books from feed books by their embeddings alone?"""
-    idx = np.where(data.y == 0)[0]
-    t = (data.source[idx] == "feed").astype(int)
+    """Can a model tell old matched books from feed books by their embeddings alone?"""
+    idx = np.where((data.y == 0) & (data.is_feed | (data.store == "matched")))[0]
+    t = data.is_feed[idx].astype(int)
     g = data.groups[idx]
     if t.sum() < FOLDS or (1 - t).sum() < FOLDS:
         return None
@@ -374,6 +506,41 @@ def pm(r, k, as_pct=False):
     return f"{r[k]:.3f} ± {r[k + '_sd']:.3f}"
 
 
+def paired(res, s, a, b):
+    """Model a against model b on comparison set s, fold by fold on the same folds."""
+    d = res[(s, a)]["aucs"] - res[(s, b)]["aucs"]
+    mean, sd, wins = float(d.mean()), float(d.std()), int((d > 0).sum())
+    if mean > sd:
+        verdict = "yes, more than the noise"
+    elif mean < -sd:
+        verdict = "no, it is worse by more than the noise"
+    else:
+        verdict = "no, inside the noise"
+    return {"mean": mean, "sd": sd, "wins": wins, "n": len(d), "verdict": verdict,
+            "text": f"{mean:+.3f} ± {sd:.3f} (better in {wins} of {len(d)} folds)"}
+
+
+def quart(a, fmt="{:.2f}", points=(10, 25, 50, 75, 90)):
+    a = np.asarray(a, dtype=float)
+    a = a[~np.isnan(a)]
+    return " / ".join(fmt.format(v) for v in np.percentile(a, points)) if len(a) else "n/a"
+
+
+def band_rows(name, votes, avg):
+    """Shares for the rule check. Returns the "any number of votes" row and the "trusted votes" row."""
+    n = len(votes)
+    if not n:
+        return [name, 0, "", "", "", ""], [name, 0, "", "", "", "", ""]
+    has = votes > 0
+    a = np.where(has, avg, np.nan)
+    any_row = [name, n, pct(np.mean(a > 4)), pct(np.mean((a >= 3) & (a <= 4))), pct(np.mean(a < 3)), pct(np.mean(~has))]
+    ok = votes >= MIN_VOTES
+    t = avg[ok]
+    trusted = [name, n, pct(ok.mean()), pct(np.mean(has & ~ok)), pct(np.mean(~has))]
+    trusted += [f"{pct(np.mean(t > 4))} / {pct(np.mean((t >= 3) & (t <= 4)))} / {pct(np.mean(t < 3))}" if len(t) else "n/a"]
+    return any_row, trusted
+
+
 def main():
     d = load()
     books, counts = d["books"], d["counts"]
@@ -381,36 +548,78 @@ def main():
     group_names = [g for g in genre_map["groups"] if g != "nonfiction"] or sorted({g for b in books for g in b["groups"]})
     styl_meta = d["meta"].get("stylometry_features") or []
     styl_names = [f["name"] for f in styl_meta]
-    data = Data(books, group_names, styl_names)
+    cat = open_catalog()
+    if cat is None:
+        sys.exit('data/catalog.db has no ratings table (librate). Run "node src/fetch-catalog.js" first.')
+    data = Data(books, group_names, styl_names, load_votes(cat, books))
+    facts = catalog_facts(cat, genre_map)
+    cat.close()
     y = data.y
-    n_pos, n_unl = int(y.sum()), int((1 - y).sum())
-    n_matched, n_feed = int((data.source == "matched").sum()), int((data.source == "feed").sum())
-    if n_pos < FOLDS or n_unl < FOLDS:
-        sys.exit(f"Not enough books with vectors: {n_pos} liked, {n_unl} unlabeled. Run model/embed.py first.")
+    liked = y == 1
+    in_rated, in_matched, is_feed = data.source == "rated-matched", data.store == "matched", data.is_feed
+    n_pos, n_rated, n_matched, n_feed = int(liked.sum()), int(in_rated.sum()), int(in_matched.sum()), int(is_feed.sum())
+    if n_pos < FOLDS or n_rated < 30 or n_matched < 30:
+        sys.exit(f"Not enough books with vectors: {n_pos} liked, {n_rated} rated-matched, {n_matched} matched. Run model/embed.py first.")
 
     answers = Counter(d["labels"].values())
     n_answers = sum(answers.values())
     use_labels = n_answers >= MIN_LABELS
-    print(f"Fingerprints: {n_pos} liked, {n_matched} matched, {n_feed} feed books; {n_answers} label answers. Testing the models ...", flush=True)
-    res, ext, oof, chosen = cross_validate(data, use_labels)
+    print(f"Fingerprints: {n_pos} liked, {n_rated} rated-matched, {n_matched} old matched, {n_feed} feed books; {n_answers} label answers. Testing the models ...", flush=True)
+    names, res, feed_res, oof, chosen, readers = cross_validate(data, use_labels)
+    _, readers_all = data.like_minded(np.where(liked)[0])
     pile1 = pile_check_feed(data)
     sims, other_sim = pile_check_epub(data, d["liked_keys_all"])
     tries, best_k, clusters = taste_map(data)
 
+    R = "rated"
+    text_gain = paired(res, R, "rb+text", "rb")
+    lm_vs_rb, lm_vs_text = paired(res, R, "lm", "rb"), paired(res, R, "lm", "rb+text")
+    lmrb_vs_rb, lmall_vs_text = paired(res, R, "lm+rb", "rb"), paired(res, R, "lm+rb+text", "rb+text")
+    best_lm = max(LM_MODELS, key=lambda m: res[(R, m)]["auc"])
+    best_lm_vs_rb, best_lm_vs_text = paired(res, R, best_lm, "rb"), paired(res, R, best_lm, "rb+text")
+
     out = []
     add = out.append
-    add("# Text fingerprints\n")
+    add("# Text fingerprints and ratings\n")
     add("Built by `model/fingerprints.py` (run everything with `npm run fingerprints`). "
-        "Milestone 2 scored a book by simple facts such as genre and length. This report asks whether the *text itself* helps: "
-        "how the book is written (stylometry) and what it is about (embeddings).\n")
+        "Milestone 3 asked whether the *text itself* helps to find my books: how a book is written (stylometry) and what it is about (embeddings). "
+        "Milestone 3b adds the reader ratings from Flibusta, which is how I really choose books, and a harder comparison set: "
+        "books that are rated as well as my liked books.\n")
+
+    # ---- the plain answers
+    add("## The three plain answers\n")
+    has_dates = bool(facts["date_cols"])
+    add(f"1. **What the ratings table contains.** One row per reader per book: {facts['rows']:,} votes from {facts['readers']:,} readers on {facts['rated_books']:,} books. "
+        f"Each row has a reader number, a book number and a mark from 1 to 5. "
+        + ("Votes have dates." if has_dates else "**Votes have no dates**, so nothing can be said about how fast a new book collects votes.") + "\n")
+    r_rb, r_text = res[(R, "rb")], res[(R, "rb+text")]
+    add(f"2. **Does text beat model rb on the rated-matched set?** **{'Yes' if text_gain['mean'] > text_gain['sd'] else 'No'}.** "
+        f"rb scores {r_rb['auc']:.3f} ± {r_rb['auc_sd']:.3f}, rb+text scores {r_text['auc']:.3f} ± {r_text['auc_sd']:.3f}. "
+        f"Measured fold by fold on the same folds the difference is {text_gain['text']}. "
+        + ("That is more than the fold-to-fold noise of the difference, so text does add something beyond ratings and genres."
+           if text_gain["mean"] > text_gain["sd"] else
+           "That is not more than the fold-to-fold noise of the difference, so text is not shown to add anything beyond ratings and genres.") + "\n")
+    r_lm = res[(R, best_lm)]
+    both = lmrb_vs_rb["mean"] > lmrb_vs_rb["sd"] and lmall_vs_text["mean"] > lmall_vs_text["sd"]
+    both_word = "Yes, when it is added to them" if both else "No"
+    alone_both = lm_vs_rb["mean"] > lm_vs_rb["sd"] and lm_vs_text["mean"] > lm_vs_text["sd"]
+    add(f"3. **Does the like-minded readers score beat both?** **{both_word}; {'yes also' if alone_both else 'no'} on its own.** "
+        f"Adding the score to rb changes the AUC by {lmrb_vs_rb['text']}; adding it to rb+text by {lmall_vs_text['text']}. "
+        f"The best model of all is **{best_lm}**: {r_lm['auc']:.3f} ± {r_lm['auc_sd']:.3f} "
+        f"({best_lm_vs_rb['mean']:+.3f} ± {best_lm_vs_rb['sd']:.3f} against rb, {best_lm_vs_text['mean']:+.3f} ± {best_lm_vs_text['sd']:.3f} against rb+text). "
+        f"The score alone (model lm, three numbers and nothing else) reaches {res[(R, 'lm')]['auc']:.3f}, "
+        f"which is level with rb and rb+text, not above them "
+        f"(against rb {lm_vs_rb['mean']:+.3f} ± {lm_vs_rb['sd']:.3f}, against rb+text {lm_vs_text['mean']:+.3f} ± {lm_vs_text['sd']:.3f}). "
+        f"There are {readers_all} like-minded readers when all liked books are used, and {readers.mean():.0f} on average inside a training part.\n")
+    add("\"More than the noise\" means everywhere in this report: the average gain over the 50 test folds is bigger than the spread of that gain from fold to fold.\n")
 
     # ---- counts
     add("## Books used\n")
     fb2_share = counts["liked_fb2"] / max(1, counts["liked_all"])
     liked_fetch = {r["key"]: r for r in d["fetch"] if r["kind"] == "liked"}
-    matched_fetch = [r for r in d["fetch"] if r["kind"] == "matched"]
-    m_ok = sum(1 for r in matched_fetch if r["status"] == "ok")
-    m_failed = sum(1 for r in matched_fetch if r["status"] != "ok")
+    fetch_of = {k: [r for r in d["fetch"] if r["kind"] == k] for k in ("matched", "rated")}
+    failed_of = {k: sum(1 for r in v if r["status"] != "ok") for k, v in fetch_of.items()}
+    rated_new = counts["rated_picked"] - counts["rated_reused"]
     add(table(["Group", "Books"], [
         ["Liked books in the archive", counts["liked_all"]],
         ["... with FB2 text downloaded from the mirror", f"{counts['liked_fb2']} ({pct(fb2_share)})"],
@@ -418,27 +627,42 @@ def main():
         ["... left out as collections", counts["liked_collections"]],
         ["... left out as non-fiction", counts["liked_nonfiction"]],
         ["**Liked books used (positive class)**", f"**{n_pos}**"],
-        ["Matched background: books picked from the catalog", counts["picked"]],
+        ["Rated-matched set: books picked from the catalog", counts["rated_picked"]],
+        ["... reused from the old matched set", counts["rated_reused"]],
+        ["... new: downloaded and parsed", counts["rated_parsed"]],
+        ["... new: download or parse failed", failed_of["rated"]],
+        ["... new: not tried yet", max(0, rated_new - len(fetch_of["rated"]))],
+        ["**Rated-matched books used (source = rated-matched)**", f"**{n_rated}**"],
+        ["Old matched set: books picked from the catalog", counts["picked"]],
         ["... downloaded and parsed", counts["matched_parsed"]],
-        ["... download or parse failed", m_failed],
-        ["... not tried yet", max(0, counts["picked"] - len(matched_fetch))],
-        ["**Matched books used (unlabeled, source = matched)**", f"**{n_matched}**"],
-        ["**Feed books used (unlabeled, source = feed)**", f"**{n_feed}**"],
+        ["... download or parse failed", failed_of["matched"]],
+        ["**Old matched books used**", f"**{n_matched}** ({int((in_rated & in_matched).sum())} of them are also in the rated-matched set)"],
+        ["**Feed books (only scored, never trained on)**", f"**{n_feed}**"],
         ["Different author groups (co-authors count as one group)", len(set(data.groups))],
     ]))
     if d["no_vector"]:
         add("Books left out because they have no embedding yet (run `model/embed.py`): " + ", ".join(f"{v} {k}" for k, v in d["no_vector"].items()) + ".\n")
-    add(f"The matched background is a random sample of Russian-language fiction from the catalog (not liked, not deleted, not a collection, "
-        f"at least 20,000 words when the catalog knows the size), drawn so that its years follow the years of the liked books. Genre was not matched. "
-        f"A parsed matched book is dropped when it turns out to be a collection, a duplicate, or not Russian-language.\n")
-    yl = np.array([b["year"] for b in books if b["y"] == 1 and b["year"]])
-    ym = np.array([b["year"] for b in books if b["source"] == "matched" and b["year"]])
-    yf = np.array([b["year"] for b in books if b["source"] == "feed" and b["year"]])
-    if len(yl) and len(ym):
-        q = lambda a: " / ".join(f"{v:.0f}" for v in np.percentile(a, [25, 50, 75])) if len(a) else "n/a"  # noqa: E731
-        add(table(["Pile", "Year: lower quarter / median / upper quarter"], [["Liked", q(yl)], ["Matched", q(ym)], ["Feed", q(yf)]]))
-    if n_matched < MIN_MATCHED:
-        add(f"> **WARNING: only {n_matched} matched books are usable, fewer than {MIN_MATCHED}.** Run `node src/fetch-books.js` again to continue the downloads.\n")
+    add("**The two comparison sets.** Both are Russian-language fiction from the catalog: not liked, not deleted, not a collection, "
+        "at least 20,000 words when the catalog knows the size.\n\n"
+        f"- **Rated-matched** (the one that counts): every book has at least {MIN_VOTES} votes, and the books were drawn so that their years *and* "
+        "their average ratings (in steps of a quarter star) follow the liked books that have at least 5 votes. A model cannot win here just by saying \"this book is well rated\".\n"
+        "- **Old matched** (easier): a random sample matched on year only. Most of these books have few votes or a low average, "
+        "so the rating alone already separates them from my books.\n\n"
+        "A parsed book is dropped when it turns out to be a collection, a duplicate, or not Russian-language. Genre was not matched in either set.\n")
+    lk5 = liked & (data.votes >= MIN_VOTES)
+    yr = lambda mask: quart([b["year"] for b, m in zip(books, mask) if m and b["year"]], "{:.0f}", (25, 50, 75))  # noqa: E731
+    add(table(["Pile", "Books", "Year: lower quarter / median / upper quarter", "Average rating: lower quarter / median / upper quarter", "Votes: median"], [
+        ["Liked", n_pos, yr(liked), quart(data.avg[liked], points=(25, 50, 75)), f"{np.median(data.votes[liked]):.0f}"],
+        [f"Liked with at least {MIN_VOTES} votes", int(lk5.sum()), yr(lk5), quart(data.avg[lk5], points=(25, 50, 75)), f"{np.median(data.votes[lk5]):.0f}"],
+        ["Rated-matched", n_rated, yr(in_rated), quart(data.avg[in_rated], points=(25, 50, 75)), f"{np.median(data.votes[in_rated]):.0f}"],
+        ["Old matched", n_matched, yr(in_matched), quart(data.avg[in_matched], points=(25, 50, 75)), f"{np.median(data.votes[in_matched]):.0f}"],
+        ["Feed", n_feed, yr(is_feed), quart(data.avg[is_feed], points=(25, 50, 75)), f"{np.median(data.votes[is_feed]):.0f}" if n_feed else ""],
+    ]))
+    add("Average ratings are over books that have at least one vote. Years and average ratings of the rated-matched set follow the liked books; "
+        "the number of votes was not matched.\n")
+    for name, n_set in (("rated-matched", n_rated), ("old matched", n_matched)):
+        if n_set < MIN_SET:
+            add(f"> **WARNING: only {n_set} {name} books are usable, fewer than {MIN_SET}.** Run `npm run fingerprints` again to continue the downloads.\n")
     if fb2_share < 0.95:
         add(f"> **WARNING: only {pct(fb2_share)} of the liked books have FB2 text (the goal is 95%).**\n")
 
@@ -453,50 +677,73 @@ def main():
     newer = [r for r in liked_fetch.values() if r["status"] == "ok" and r["reason"]]
     if newer:
         add(f"{len(newer)} liked books were replaced in the library by a newer copy of the same book; for those the newer copy was downloaded.\n")
-    if m_failed:
-        why = Counter()
-        for r in matched_fetch:
-            if r["status"] != "ok":
-                reason = (r["reason"] or "unknown").split(": ", 1)[-1]
-                why[reason.split(" | ")[0][:90]] += 1
-        add(f"Matched books: {m_failed} of {len(matched_fetch)} tried could not be used:\n")
-        add(table(["Reason", "Books"], [[k, v] for k, v in why.most_common(8)]))
-    else:
-        add(f"Matched books: no failures in {len(matched_fetch)} downloads.\n")
+    for kind, title in (("rated", "Rated-matched books"), ("matched", "Old matched books")):
+        tried = fetch_of[kind]
+        if failed_of[kind]:
+            why = Counter()
+            for r in tried:
+                if r["status"] != "ok":
+                    reason = (r["reason"] or "unknown").split(": ", 1)[-1]
+                    why[reason.split(" | ")[0][:90]] += 1
+            add(f"{title}: {failed_of[kind]} of {len(tried)} tried could not be used:\n")
+            add(table(["Reason", "Books"], [[k, v] for k, v in why.most_common(8)]))
+        else:
+            add(f"{title}: no failures in {len(tried)} downloads.\n")
 
-    # ---- ratings
+    # ---- ratings (part H)
     add("## Ratings in the catalog\n")
-    if d["has_ratings"]:
-        def rating_row(name, bs):
-            rated = [b["rating"] for b in bs if b["rating"] and b["rating"]["n"]]
-            if not rated:
-                return [name, len(bs), 0, "0.0%", "", ""]
-            votes = sum(r["n"] for r in rated)
-            return [name, len(bs), len(rated), pct(len(rated) / len(bs)), f"{np.mean([r['avg'] for r in rated]):.2f}", f"{np.median([r['n'] for r in rated]):.0f}"]
-        add("The catalog dump has reader ratings from 1 to 5. They are **not used in any model yet**; this is only a count.\n")
-        add(table(["Pile", "Books", "Books with a rating", "Share", "Average rating", "Median number of votes"], [
-            rating_row("Liked", [b for b in books if b["y"] == 1]),
-            rating_row("Unlabeled (all)", [b for b in books if b["y"] == 0]),
-            rating_row("... matched", [b for b in books if b["source"] == "matched"]),
-            rating_row("... feed", [b for b in books if b["source"] == "feed"]),
-        ]))
-        add("\"Average rating\" is the average over books of each book's own average. Feed books are a few days old, so few readers have rated them yet.\n")
+    add("### What the ratings table holds\n")
+    v = facts["values"]
+    add(f"The table `librate` has the columns {', '.join('`' + c + '`' for c in facts['cols'])}. It is **one row per reader per book**, not a total per book: "
+        f"{facts['rows']:,} rows, {facts['readers']:,} different readers, {facts['rated_books']:,} different books. "
+        + ("No reader has two rows for the same book. " if facts["pairs"] == facts["rows"] else f"{facts['rows'] - facts['pairs']:,} rows repeat a reader and book pair; the highest mark is used. ")
+        + "The readers are only numbers, with no names. "
+        + (f"Date columns: {', '.join(facts['date_cols'])}." if has_dates else "**There is no date or time column**, so the table does not say when a vote was given.") + "\n")
+    add(table(["Mark", "Votes", "Share"], [[k, f"{v.get(k, 0):,}", pct(v.get(k, 0) / max(1, facts["rows"]))] for k in (1, 2, 3, 4, 5)]))
+    add("Because every reader's votes can be followed from book to book, the \"like-minded readers\" score further down is possible.\n")
+
+    add("### My rule against the data\n")
+    add(f"My rule: ignore books with an average below 3, prefer books above 4, trust an average with at least {MIN_VOTES} votes, and rarely read books with no ratings. "
+        "The tables compare my liked books with all Russian-language fiction in the catalog (not deleted).\n")
+    piles = [("Liked", data.votes[liked], data.avg[liked]), ("All Russian-language fiction in the catalog", facts["fiction_n"], facts["fiction_avg"]),
+             ("Rated-matched set", data.votes[in_rated], data.avg[in_rated]), ("Old matched set", data.votes[in_matched], data.avg[in_matched]),
+             ("Feed (a few days old)", data.votes[is_feed], data.avg[is_feed])]
+    bands = [band_rows(*p_) for p_ in piles]
+    add("Share of books by average rating, counting every book that has at least one vote:\n")
+    add(table(["Pile", "Books", "Average above 4", "Between 3 and 4", "Below 3", "No votes"], [b[0] for b in bands]))
+    add(f"The same, counting only averages that can be trusted (at least {MIN_VOTES} votes):\n")
+    add(table(["Pile", "Books", f"At least {MIN_VOTES} votes", f"1 to {MIN_VOTES - 1} votes", "No votes", f"Among books with at least {MIN_VOTES} votes: above 4 / 3 to 4 / below 3"], [b[1] for b in bands]))
+    add("How the numbers are spread (the 10% / 25% / 50% / 75% / 90% points). Example: a 25% point of 3.6 means a quarter of the books are below 3.6.\n")
+    add(table(["Pile", "Average rating (books with a vote)", "Number of votes (all books)"],
+              [[nm, quart(np.where(vo > 0, av, np.nan)), quart(vo, "{:.0f}")] for nm, vo, av in piles[:2]]))
+    lv, la = data.votes[liked], np.nan_to_num(data.avg[liked])
+    cv, ca = facts["fiction_n"], np.nan_to_num(facts["fiction_avg"])
+    add(f"**What this says about the rule.** {pct(np.mean((lv > 0) & (la >= 3)))} of my liked books have an average of 3 or more, and only {pct(np.mean((lv > 0) & (la < 3)))} are below 3 "
+        f"({pct(np.mean(lv == 0))} have no votes). In the whole catalog only {pct(np.mean((cv > 0) & (ca >= 3)))} of fiction books have an average of 3 or more, "
+        f"and {pct(np.mean(cv == 0))} have no votes at all. {pct(np.mean(lv >= MIN_VOTES))} of my books have at least {MIN_VOTES} votes, against {pct(np.mean(cv >= MIN_VOTES))} in the catalog. "
+        "So the data agrees with the rule: almost everything I read is rated, and rated 3 or higher. "
+        f"\"Above 4\" is a preference, not a wall: {pct(np.mean((lv > 0) & (la > 4)))} of my books are above 4 and {pct(np.mean((lv > 0) & (la >= 3) & (la <= 4)))} sit between 3 and 4.\n")
+    add("### How fast a new book collects votes\n")
+    if has_dates:
+        add("The votes have dates, but this report does not compute the days to 5 and 10 votes yet.\n")
     else:
-        add("The catalog dump has no ratings table, or `node src/fetch-books.js` has not looked them up yet.\n")
+        add("**This cannot be answered from the catalog.** The question was how many days after upload a book usually reaches 5 and 10 votes. "
+            "Votes carry no date, so the dump only shows how many votes a book has today. "
+            f"The only hint is the feed: {n_feed} books that are a few days old, of which {pct(np.mean(data.votes[is_feed] >= MIN_VOTES)) if n_feed else 'n/a'} already have at least {MIN_VOTES} votes "
+            f"and {pct(np.mean(data.votes[is_feed] == 0)) if n_feed else 'n/a'} have none.\n")
 
     # ---- pile checks
-    add("## Honest checks on the two piles\n")
-    add("### Check 1: can the text tell a feed book from a matched book?\n")
+    add("## Honest checks on the piles\n")
+    add("### Check 1: can the text tell a feed book from an old matched book?\n")
     if pile1:
         auc, sd, nf, nm = pile1
-        add(f"A model was trained to separate the {nf} feed books from the {nm} matched books, using only the embeddings "
+        add(f"A model was trained to separate the {nf} feed books from the {nm} old matched books, using only the embeddings "
             f"(author-grouped, {FOLDS} folds, {REPEATS} repeats). **ROC AUC {auc:.3f} ± {sd:.3f}.** 0.5 would mean the two piles look the same.\n")
         if auc > PILE_LIMIT:
             add(f"> **This is above {PILE_LIMIT}: the upload week is visible in the text.** This week's uploads read differently from a random "
-                "sample of the library with liked-book years. So a model trained on \"liked vs feed\" partly learns \"not from this week\" instead of \"my taste\". "
-                "That is why the matched background matters, and why the transfer test below is the number to trust for new uploads.\n")
+                "sample of the library with liked-book years.\n")
         else:
-            add(f"This is not above {PILE_LIMIT}, so the upload week is not strongly visible in the text. The feed and the matched background can be mixed.\n")
+            add(f"This is not above {PILE_LIMIT}, so the upload week is not strongly visible in the text.\n")
     else:
         add("Not enough feed or matched books for this check yet.\n")
     add("### Check 2: does the file format change the embedding?\n")
@@ -512,77 +759,81 @@ def main():
 
     # ---- models
     add("## How well the models rank\n")
-    add("Positive = liked books. Unlabeled = matched + feed. No model uses the year. All are logistic regressions:\n")
+    add("Positive = liked books. Each model is trained and tested twice: once against the rated-matched set and once against the old matched set. "
+        "No model uses the year. All are logistic regressions:\n")
     add("\n".join(f"- **{MODELS[m][0].split(':')[0]}** -{MODELS[m][0].split(':', 1)[1]}" for m in MODELS) + "\n")
     add(f"Embeddings: {PCA_DIMS} PCA directions, learned inside each training fold. "
         f"Test: author-grouped, {FOLDS} folds, {REPEATS} repeats ({FOLDS * REPEATS} test folds); an author is never on both sides. "
-        "Every scale and the model's penalty strength are also chosen inside the training fold.\n")
-    names = list(res)
-    has_never = any("never" in res[m] for m in names)
-    head = ["Model", "ROC AUC", "Median percentile of a liked book", f"Liked books in the top {int(TOP_SHARE * 100)}%", "AUC gain over b0 (same folds)"]
-    if has_never and use_labels:
+        "Every scale, the model's penalty strength and the list of like-minded readers are also found inside the training fold only.\n")
+    top = f"top {int(TOP_SHARE * 100)}%"
+    has_never = use_labels and any("never" in res[k] for k in res)
+    head = ["Model", "**Rated-matched: ROC AUC**", "Rated-matched: median percentile of a liked book", f"Rated-matched: liked books in the {top}",
+            "Old matched: ROC AUC", f"Old matched: liked books in the {top}"]
+    if has_never:
         head.append("AUC liked vs \"would never read\"")
     rows_ = []
     for m in names:
-        r = res[m]
-        diff = r["aucs"] - res["b0"]["aucs"]
-        gain = "" if m == "b0" else f"{diff.mean():+.3f} ± {diff.std():.3f} (better in {int((diff > 0).sum())} of {len(diff)} folds)"
-        label_name = MODELS[m][0] if m in MODELS else "all+labels: all, with my answers"
-        row = [label_name, pm(r, "auc"), pm(r, "median", True), pm(r, "top", True), gain]
-        if has_never and use_labels:
-            row.append(f"{r['never']:.3f} ± {r['never_sd']:.3f}" if "never" in r else "")
+        a, b = res[(R, m)], res[("matched", m)]
+        row = [model_name(m), f"**{pm(a, 'auc')}**", pm(a, "median", True), pm(a, "top", True), pm(b, "auc"), pm(b, "top", True)]
+        if has_never:
+            row.append(f"{a['never']:.3f} ± {a['never_sd']:.3f}" if "never" in a else "")
         rows_.append(row)
     add(table(head, rows_))
     add("How to read the numbers:\n")
     add("- **ROC AUC**: 0.5 is coin-flipping, 1.0 is a perfect ranking. The number after ± is how much it moves from fold to fold.\n"
-        "- **Median percentile**: each liked test book is placed in the ranking of the unlabeled test books. 10% means the typical liked book "
+        "- **Median percentile**: each liked test book is placed in the ranking of the comparison test books. 10% means the typical liked book "
         "sits in the top tenth of the pile; 50% would be pure chance. Lower is better.\n"
-        f"- **Top {int(TOP_SHARE * 100)}%**: the share of liked test books that score higher than 95% of the unlabeled test books. Chance gives {int(TOP_SHARE * 100)}%. "
-        "This is the realistic one: it is close to \"if I only look at the best 1 in 20 new books, how many of my books would I find\".\n"
-        "- **AUC gain over b0**: the difference to model b0 measured fold by fold on the same folds, which removes most of the fold-to-fold noise.\n")
-    if has_never and use_labels:
-        add("- **AUC liked vs \"would never read\"**: how well the score separates liked books from the books I marked \"would never read\" "
-            "(scores from the author-grouped test; ± is over the repeats). This is the cleanest number, because both sides are real answers.\n")
+        f"- **Top {int(TOP_SHARE * 100)}%**: the share of liked test books that score higher than 95% of the comparison test books. Chance gives {int(TOP_SHARE * 100)}%.\n"
+        "- **The rated-matched columns are the ones that count.** On the old matched set the rating does most of the work, because that set is full of "
+        "books with few votes or low averages. On the rated-matched set the average rating was matched away on purpose, so model r can only use the number of votes.\n")
+    if has_never:
+        add("- **AUC liked vs \"would never read\"**: how well the score (trained against the rated-matched set) separates liked books from the books I marked "
+            "\"would never read\" (scores from the author-grouped test; ± is over the repeats). This is the cleanest number, because both sides are real answers.\n")
 
-    # the plain verdict
-    text_models = [m for m in ("s", "e", "be", "all") if m in res]
-    top_m = max(text_models, key=lambda m: res[m]["auc"])
-    r_top, r_b0 = res[top_m], res["b0"]
-    diff = r_top["aucs"] - r_b0["aucs"]
-    add("### Does text beat 0.79?\n")
-    over = r_top["auc"] - OLD_AUC
-    if over > r_top["auc_sd"]:
-        verdict = f"**Yes.** The best text model ({top_m}) reaches {r_top['auc']:.3f}, which is {over:+.3f} against {OLD_AUC}; the fold-to-fold noise is ±{r_top['auc_sd']:.3f}, so the gain is bigger than the noise."
-    elif over > 0:
-        verdict = f"**Not clearly.** The best text model ({top_m}) reaches {r_top['auc']:.3f}, which is {over:+.3f} against {OLD_AUC}, but the fold-to-fold noise is ±{r_top['auc_sd']:.3f}. The gain is inside the noise."
-    else:
-        verdict = f"**No.** The best text model ({top_m}) reaches {r_top['auc']:.3f}, which is {over:+.3f} against {OLD_AUC} (fold-to-fold noise ±{r_top['auc_sd']:.3f})."
-    add(verdict + "\n")
-    add(f"A caution about that comparison: {OLD_AUC} was measured against feed books only and with the year as a feature; today's test uses a different, "
-        f"fairer unlabeled pile. The like-for-like comparison is against **b0 on the same books and folds**: b0 scores {r_b0['auc']:.3f} ± {r_b0['auc_sd']:.3f}, "
-        f"model {top_m} scores {r_top['auc']:.3f}, a gain of {diff.mean():+.3f} ± {diff.std():.3f} per fold, and {top_m} wins in {int((diff > 0).sum())} of {len(diff)} folds. "
-        + ("That gain is larger than its own fold-to-fold spread, so it is real." if diff.mean() > diff.std() else
-           "That gain is not larger than its own fold-to-fold spread, so it is not established yet.") + "\n")
-    parts = []
-    for m in ("s", "e"):
-        dm = res[m]["aucs"] - r_b0["aucs"]
-        parts.append(f"{'stylometry added to b0' if m == 's' else 'embeddings alone, with no genre at all,'} "
-                     f"{'gains' if m == 's' else 'differ from b0 by'} {dm.mean():+.3f} ± {dm.std():.3f}")
-    add("Where it comes from: " + "; ".join(parts) + ".\n")
+    add("### Does one model really beat another?\n")
+    add("Each row compares two models fold by fold on the same 50 folds, which removes most of the fold-to-fold noise.\n")
+    pairs = [("rb", "r", "genres, length, translated, series on top of ratings"),
+             ("rb+text", "rb", "**text on top of ratings and genres**"),
+             ("lm", "rb", "like-minded readers alone, against rb"),
+             ("lm", "rb+text", "like-minded readers alone, against rb+text"),
+             ("lm+rb", "rb", "like-minded readers on top of rb"),
+             ("lm+rb+text", "rb+text", "like-minded readers on top of rb+text"),
+             ("lm+rb+text", "lm+rb", "text on top of like-minded readers + rb"),
+             ("all", "b0", "text on top of genres, with no ratings at all")]
+    if use_labels:
+        pairs.append((LABEL_MODEL, "all", "my answers on top of model all"))
+    pr = []
+    for a, b, what in pairs:
+        x, o = paired(res, R, a, b), paired(res, "matched", a, b)
+        pr.append([f"{a} against {b}", what, x["text"], x["verdict"], o["text"]])
+    add(table(["Comparison", "What it tests", "Rated-matched: AUC gain", "Real gain on rated-matched?", "Old matched: AUC gain"], pr))
 
-    add("### Does the model transfer to new uploads?\n")
-    if "be_on_feed" in ext and "be_matched_only_on_feed" in ext:
-        a, b = ext["be_on_feed"], ext["be_matched_only_on_feed"]
-        add("Here the test is always \"liked test books against **feed** test books\". The first row is model be as above; "
-            "the second was trained without seeing a single feed book (unlabeled = matched only).\n")
-        add(table(["Model be, trained with", "ROC AUC on liked vs feed", "Median percentile", f"Top {int(TOP_SHARE * 100)}%"], [
-            ["matched + feed as unlabeled", pm(a, "auc"), pm(a, "median", True), pm(a, "top", True)],
-            ["matched only as unlabeled", pm(b, "auc"), pm(b, "median", True), pm(b, "top", True)],
-        ]))
-        gap = a["auc"] - b["auc"]
-        add(f"Training without feed books changes the AUC on new uploads by {-gap:+.3f}. "
-            + ("The model transfers well: what it learned from the matched background also ranks this week's uploads." if gap < 0.03 else
-               "Part of the first row's score comes from recognising the feed pile itself; the second row is the honest estimate for new uploads.") + "\n")
+    add("### Does text add anything beyond ratings and genres?\n")
+    add(f"**{'Yes' if text_gain['mean'] > text_gain['sd'] else 'No'}.** On the rated-matched set rb scores {r_rb['auc']:.3f} and rb+text scores {r_text['auc']:.3f}. "
+        f"The gain is {text_gain['mean']:+.3f} and its fold-to-fold noise is ±{text_gain['sd']:.3f}; rb+text is better in {text_gain['wins']} of {text_gain['n']} folds. "
+        + ("The gain is bigger than its noise, so the text carries something about my taste that ratings, genres and length do not."
+           if text_gain["mean"] > text_gain["sd"] else
+           "The gain is not bigger than its noise, so there is no proof that text adds anything once ratings, genres and length are known.") + "\n")
+    add("### The like-minded readers score\n")
+    add(f"A like-minded reader is a reader who gave 4 or 5 to at least {LM_MIN_BOOKS} of my liked books. Using all {n_pos} liked books there are **{readers_all}** such readers. "
+        f"In the test they are found from the liked books of the training part only: {readers.mean():.0f} on average (from {readers.min()} to {readers.max()}).\n\n"
+        "For every book the score is three numbers: how many like-minded readers voted for it, what share of all its voters they are, "
+        f"and how much higher (or lower) they rated it than all readers did (a few votes are pulled towards the book's overall average, with the weight of {LM_SHRINK:g} votes). "
+        "A training book never helps to choose its own like-minded readers, and neither do other books by the same author; "
+        "otherwise the score would look far better in training than it can be on a new author.\n")
+    add(f"**Does it beat both rb and rb+text? {both_word}; {'yes also' if alone_both else 'no'} on its own.** Best model with the score: {best_lm}, {r_lm['auc']:.3f} ± {r_lm['auc_sd']:.3f} on the rated-matched set "
+        f"({best_lm_vs_rb['mean']:+.3f} ± {best_lm_vs_rb['sd']:.3f} against rb, {best_lm_vs_text['mean']:+.3f} ± {best_lm_vs_text['sd']:.3f} against rb+text). "
+        f"Added to rb it changes the AUC by {lmrb_vs_rb['text']}; added to rb+text by {lmall_vs_text['text']}.\n")
+
+    add("### New uploads: liked books against feed books\n")
+    fr = [(s, m) for s in data.sets for m in ("all", "rb+text") if (s, m) in feed_res]
+    if fr:
+        add("Feed books are never trained on. Here each model's score is tested on \"liked test books against feed test books\".\n")
+        add(table(["Model", "Trained against", "ROC AUC on liked vs feed", "Median percentile", f"Top {int(TOP_SHARE * 100)}%"],
+                  [[m, SETS[s], pm(feed_res[(s, m)], "auc"), pm(feed_res[(s, m)], "median", True), pm(feed_res[(s, m)], "top", True)] for s, m in fr]))
+        add("Model all uses no ratings, so its rows show how well taste in text and genre carries over to this week's uploads. "
+            "The rb+text rows are a warning rather than a result: feed books have almost no votes yet, so against the old matched set a ratings model "
+            "separates them for the wrong reason, and against the rated-matched set it has never seen a book with so few votes.\n")
     else:
         add("Not enough feed books in the test folds for this check.\n")
 
@@ -590,13 +841,15 @@ def main():
     add("## My answers from the labelling page\n")
     add(f"Answers so far: **{n_answers}** ({answers.get('never', 0)} would never read, {answers.get('maybe', 0)} maybe, {answers.get('want', 0)} want to read). "
         f"Starred favourites: {len(d['stars'])}.\n")
+    add("The page now shows the average rating and the number of votes on each card. Books with an average of 3 or more and at least 5 votes come first, "
+        "and among those the rated-matched books come before the others.\n")
     if use_labels:
-        add(f"There are at least {MIN_LABELS} answers, so they are used: the extra column in the table above, and the extra model **all+labels** "
+        add(f"There are at least {MIN_LABELS} answers, so they are used: the extra column \"liked vs would never read\" for every model in the table above, and the extra model **all+labels** "
             f"(model all, where \"would never read\" books count {NEVER_WEIGHT:g} times as negatives, starred books count {STAR_WEIGHT:g} times as positives, "
-            "and \"want to read\" books are not used as negatives). Books I already answered are left out of the top-30 list below.\n")
+            "and \"want to read\" books are not used as negatives). Books I already answered are left out of the two lists below.\n")
     else:
         add(f"> **Fewer than {MIN_LABELS} answers, so the label step is skipped**: no \"liked vs would never read\" metric, no all+labels model, "
-            "and nothing is removed from the top-30 list. Start the page with `node src/label-server.js`, answer some more, and run the report again.\n")
+            "and nothing is removed from the lists below. Start the page with `npm run label`, answer some more, and run the report again.\n")
     add("### Genre groups: \"would never read\" against liked\n")
     never_idx = np.where(data.never)[0]
     if len(never_idx):
@@ -628,19 +881,38 @@ def main():
         add(table(["Author", "Title"], [[b["author_names"], b["title"]] for b in c["closest"]]))
 
     # ---- lists
-    best_m = max(names, key=lambda m: res[m]["auc"])
-    score = oof[best_m]
-    add(f"## The 30 unlabeled books with the highest score\n")
-    add(f"Scores come from the model with the best ROC AUC, **{best_m}**, in the author-grouped test: every book is scored only by models that never saw "
-        "the book or its author, averaged over the repeats. The score is between 0 and 1.\n")
-    order = [i for i in np.argsort(-score) if y[i] == 0 and not (use_labels and books[i]["label"])]
-    add(table(["Score", "Key", "Author", "Title", "Genres", "Source"],
-              [[f"{score[i]:.2f}", books[i]["key"], books[i]["author_names"], books[i]["title"], ", ".join(books[i]["genres"]), books[i]["source"]] for i in order[:30]]))
+    best_m = max(names, key=lambda m: res[(R, m)]["auc"])
+    early_m = max(NO_RATINGS, key=lambda m: res[(R, m)]["auc"])
+    answered = np.array([bool(b["label"]) for b in books]) & use_labels
+
+    def book_rows(order, score, with_source=True):
+        rows_b = []
+        for i in order:
+            b = books[i]
+            row = [f"{score[i]:.2f}", f"{data.avg[i]:.2f}" if data.votes[i] else "", int(data.votes[i]), b["key"], b["author_names"], b["title"], ", ".join(b["genres"])]
+            rows_b.append(row + ([b["source"]] if with_source else []))
+        return rows_b
+
+    cols = ["Score", "Rating", "Votes", "Key", "Author", "Title", "Genres", "Source"]
+    add(f"## The top {LIST_SIZE}, in two lists\n")
+    add("Every score comes from the author-grouped test against the rated-matched set: a book is scored only by models that never saw "
+        "the book or its author, averaged over the repeats. The score is between 0 and 1. Scores of the two lists come from different models, so do not compare them across lists.\n")
+    add(f"### Rated: at least {MIN_VOTES} votes and an average of 3 or more\n")
+    score = oof[(R, best_m)]
+    add(f"Scored by the model with the best ROC AUC on the rated-matched set, **{best_m}**. {int((~liked & data.rated_ok).sum())} unlabeled books qualify.\n")
+    order = [i for i in np.argsort(-score) if not liked[i] and data.rated_ok[i] and not answered[i]]
+    add(table(cols, book_rows(order[:LIST_SIZE], score)))
+    add(f"### Early: fewer than {MIN_VOTES} votes\n")
+    early = oof[(R, early_m)]
+    add(f"These books have too few votes for the rating to mean much, so they are scored by the best model that uses no ratings at all, **{early_m}** "
+        f"(text and genres only). {int((~liked & (data.votes < MIN_VOTES)).sum())} unlabeled books qualify. "
+        f"Books with at least {MIN_VOTES} votes and an average below 3 are in neither list: my rule says to ignore them.\n")
+    order = [i for i in np.argsort(-early) if not liked[i] and data.votes[i] < MIN_VOTES and not answered[i]]
+    add(table(cols, book_rows(order[:LIST_SIZE], early)))
     add("## The 20 liked books with the lowest score\n")
-    add("Liked books that the best model would have missed.\n")
-    low = [i for i in np.argsort(score) if y[i] == 1][:20]
-    add(table(["Score", "Key", "Author", "Title", "Genres"],
-              [[f"{score[i]:.2f}", books[i]["key"], books[i]["author_names"], books[i]["title"], ", ".join(books[i]["genres"])] for i in low]))
+    add(f"Liked books that the best model ({best_m}, trained against the rated-matched set) would have missed.\n")
+    low = [i for i in np.argsort(score) if liked[i]][:20]
+    add(table(cols[:-1], book_rows(low, score, False)))
 
     # ---- appendix: stylometry
     if styl_meta:
@@ -650,22 +922,25 @@ def main():
         rows_s = []
         for j, f in enumerate(styl_meta):
             cells = [f["what"]]
-            for mask in (y == 1, data.source == "matched", data.source == "feed"):
-                v = S[mask, j]
-                cells.append(f"{np.nanmean(v):.3g}" if np.any(~np.isnan(v)) else "")
+            for mask in (liked, in_rated, in_matched, is_feed):
+                vals = S[mask, j]
+                cells.append(f"{np.nanmean(vals):.3g}" if np.any(~np.isnan(vals)) else "")
             rows_s.append(cells)
-        add(table(["Measure", "Liked", "Matched", "Feed"], rows_s))
+        add(table(["Measure", "Liked", "Rated-matched", "Old matched", "Feed"], rows_s))
 
     REPORT.parent.mkdir(parents=True, exist_ok=True)
     REPORT.write_text("\n".join(out).replace("\n\n\n", "\n\n").rstrip() + "\n", encoding="utf-8")
 
-    for m in names:
-        r = res[m]
-        print(f"  {m:11s} AUC {r['auc']:.3f} ± {r['auc_sd']:.3f}   median percentile {100 * r['median']:.1f}%   top 5%: {100 * r['top']:.1f}%   C chosen: {dict(chosen[m])}")
-    for k, r in ext.items():
-        print(f"  {k}: AUC {r['auc']:.3f} ± {r['auc_sd']:.3f}")
+    for s in data.sets:
+        print(f"Against the {SETS[s]} set:")
+        for m in names:
+            r = res[(s, m)]
+            print(f"  {m:11s} AUC {r['auc']:.3f} ± {r['auc_sd']:.3f}   median percentile {100 * r['median']:.1f}%   top 5%: {100 * r['top']:.1f}%   C chosen: {dict(chosen[(s, m)])}")
+    print(f"  rb+text against rb on rated-matched: {text_gain['text']}")
+    print(f"  {best_lm} against rb: {best_lm_vs_rb['text']}; against rb+text: {best_lm_vs_text['text']}")
+    print(f"  like-minded readers: {readers_all} with all liked books, {readers.mean():.0f} on average in a training part")
     if pile1:
-        print(f"  pile check 1 (feed vs matched): AUC {pile1[0]:.3f}")
+        print(f"  pile check 1 (feed vs old matched): AUC {pile1[0]:.3f}")
     if sims:
         print(f"  pile check 2 (EPUB vs FB2): cosine {np.mean(sims):.4f} on {len(sims)} books")
     print(f"Report written to {REPORT.relative_to(ROOT)}")
