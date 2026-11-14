@@ -25,6 +25,10 @@
   "topPercent": 5,
   "restDays": 7,
   "retrainEveryAnswers": 10,
+  "cleanup": {
+    "feedTextDays": 14,
+    "epubDays": 30
+  },
   "filters": {
     "russianOnly": true,
     "fictionOnly": true,

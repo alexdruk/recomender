@@ -30,6 +30,7 @@
     "funnel-report": "node src/build-index.js && .venv/bin/python model/funnel.py",
     "train": ".venv/bin/python model/recommend.py train",
     "daily": "node src/daily.js",
+    "cleanup": "node src/cleanup.js",
     "start": "node src/server.js",
     "autostart-on": "node src/autostart.js on",
     "autostart-off": "node src/autostart.js off",

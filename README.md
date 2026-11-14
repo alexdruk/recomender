@@ -30,6 +30,7 @@ A personal, fully local book recommender for the Flibusta daily updates.
 | `npm start` | Starts the page at http://localhost:3000 and prints the address for the iPad. Runs the daily loop at start and then every 6 hours. |
 | `npm run check-page` | Checks that `src/page.html` keeps the Safari 9 rules (ES5 script, no CSS grid). |
 | `npm run daily` | Runs the daily loop once: download, parse, filter, fingerprint, score. |
+| `npm run cleanup` | Runs the automatic cleaning once (it also runs at the end of every daily loop). `node src/cleanup.js --dry-run` only says what would be deleted. |
 | `npm run train` | Trains the model, saves it to `data/model/recommender.joblib`, prints the quality, rescores waiting books. |
 | `npm run autostart-on` | Starts the server at every login and keeps it running (macOS launchd). Log: `data/server.log`. |
 | `npm run autostart-off` | Stops the server and removes the autostart job. |
@@ -82,11 +83,25 @@ second mirror if the first fails) through the polite queue, keeps it in
 `data/epub/`, moves the book to "Reading" (no verdict is recorded), and sends
 the file as `application/epub+zip` named `Author - Title.epub` in Latin letters.
 
+## Automatic cleaning
+
+At the end of every daily loop `src/cleanup.js` deletes:
+
+- update zips that were already parsed;
+- texts of feed books older than 14 days that are in no list. A text is kept
+  while the book is on the recommendations page, in "To send", "Reading",
+  "Liked" or "Disliked", or while its vectors are not saved yet;
+- cached EPUB files older than 30 days, except books still waiting in
+  "To send". A deleted EPUB is simply downloaded again if I ask for it.
+
+Texts of liked books, vectors, the model, answers and the config are never
+touched.
+
 ## Settings (`config.json`)
 
 `filters` (each filter can be switched off or changed), `topPercent`,
 `restDays`, `retrainEveryAnswers`, `checkEveryHours`, `port`, `host`, `mirrors`,
-`pauseSeconds`.
+`pauseSeconds`, `cleanup` (`feedTextDays`, `epubDays`).
 
 ## Where things are
 

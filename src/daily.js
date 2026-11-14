@@ -7,6 +7,8 @@
 //   2. filter every feed book that has no answer yet (settings: config.json "filters")
 //   3. fingerprint the books that passed: stylometry here, embeddings in Python
 //   4. score them with the saved model and store score and percentile ("feed_scores")
+//   5. cleanup.js: delete parsed zips, feed texts older than 14 days that are in
+//      no list, and cached EPUB files older than 30 days
 //
 // Safe to run again at any time: nothing is downloaded or measured twice.
 
@@ -16,6 +18,7 @@ const { spawnSync } = require('node:child_process');
 const c = require('./common');
 const fetchFeed = require('./fetch-feed');
 const { measure } = require('./stylometry');
+const cleanup = require('./cleanup');
 
 function ensureTables(db) {
   db.exec(`
@@ -155,6 +158,15 @@ async function main() {
   if (r.status !== 0) {
     console.log('Daily loop: the scoring step failed.');
     process.exitCode = 1;
+    return; // no cleaning: the texts may still be needed
+  }
+  // 5. cleaning: parsed zips, old feed texts that are in no list, old EPUB files
+  const db2 = c.openDb(cfg);
+  db2.pragma('busy_timeout = 60000');
+  try {
+    console.log('Daily loop: ' + cleanup.report(cleanup.clean(db2, cfg)));
+  } finally {
+    db2.close();
   }
 }
 

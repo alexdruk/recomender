@@ -185,9 +185,11 @@ function parseFb2(buf) {
 
 async function main() {
   const cfg = c.loadConfig();
+  // without the unpacked library every liked book would look "gone" and its text would be deleted
+  if (!fs.existsSync(cfg.libraryDir)) throw new Error('data/library is not there (it was cleaned up). Nothing was changed. Put Archive.zip back in data/ and run "npm run unzip" first.');
   const db = c.openDb(cfg);
   const units = c.listBookUnits(cfg.libraryDir);
-  const fb2 = units.filter((u) => u.format === 'fb2');
+  const fb2 =units.filter((u) => u.format === 'fb2');
   const other = units.filter((u) => u.unsupported);
   const store = c.makeIngester(db, 'archive', cfg.textDir);
   const counts = { ok: 0, ok_lenient: 0, failed: 0 };

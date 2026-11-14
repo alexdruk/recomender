@@ -48,6 +48,11 @@ function loadConfig() {
     restDays: Number(cfg.restDays) || 7,
     retrainEveryAnswers: Number(cfg.retrainEveryAnswers) || 10,
     filters: Object.assign({ russianOnly: true, fictionOnly: true, skipCollections: true, minWords: 10000, skipLibraryBooks: true, seriesRule: true }, cfg.filters || {}),
+    // automatic cleaning at the end of the daily loop (src/cleanup.js)
+    cleanup: {
+      feedTextDays: Math.max(1, Number((cfg.cleanup || {}).feedTextDays) || 14),
+      epubDays: Math.max(1, Number((cfg.cleanup || {}).epubDays) || 30),
+    },
     python: path.join(ROOT, '.venv', 'bin', 'python'),
     logPath: path.join(dataDir, 'server.log'),
   };
