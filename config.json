@@ -20,6 +20,7 @@
     "reviews"
   ],
   "port": 3000,
+  "host": "0.0.0.0",
   "checkEveryHours": 6,
   "topPercent": 5,
   "restDays": 7,

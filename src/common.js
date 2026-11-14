@@ -25,6 +25,7 @@ function loadConfig() {
     feedDir: path.join(dataDir, 'feed'),
     feedTextDir: path.join(dataDir, 'feed', 'text'),
     fb2Dir: path.join(dataDir, 'fb2'), // cache of downloaded .fb2.zip files
+    epubDir: path.join(dataDir, 'epub'), // cache of EPUB files sent to iBooks
     likedFb2TextDir: path.join(dataDir, 'text-fb2'), // liked books, text from the FB2 file
     matchedTextDir: path.join(dataDir, 'matched', 'text'),
     ratedTextDir: path.join(dataDir, 'rated', 'text'), // new downloads for the rated-matched set
@@ -40,6 +41,8 @@ function loadConfig() {
     reportsDir: path.join(ROOT, 'reports'),
     // the final product: daily loop, page and model
     port: Number(cfg.port) || 3000,
+    // "0.0.0.0" = reachable from the home network (iPad); "127.0.0.1" = this computer only
+    host: cfg.host || '0.0.0.0',
     checkEveryHours: Number(cfg.checkEveryHours) || 6,
     topPercent: Number(cfg.topPercent) || 5,
     restDays: Number(cfg.restDays) || 7,

@@ -32,7 +32,8 @@
     "daily": "node src/daily.js",
     "start": "node src/server.js",
     "autostart-on": "node src/autostart.js on",
-    "autostart-off": "node src/autostart.js off"
+    "autostart-off": "node src/autostart.js off",
+    "check-page": "node src/check-page.js"
   },
   "dependencies": {
     "better-sqlite3": "^13.1.1",
@@ -40,5 +41,8 @@
     "htmlparser2": "^12.0.0",
     "saxes": "^6.0.0",
     "yauzl": "^3.4.0"
+  },
+  "devDependencies": {
+    "acorn": "^8.19.0"
   }
 }
