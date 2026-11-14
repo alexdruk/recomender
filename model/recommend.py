@@ -10,7 +10,10 @@ book file. Ratings, votes, comments and the year are not used anywhere.
 
   positives        my liked books, plus every Like from the page (weight 1)
   background       the old matched set, plus every feed book that has a fingerprint
-  extra negatives  my earlier "would never read" answers, plus every Dislike from the page (weight 3)
+  extra negatives  my earlier "would never read" answers and every Dislike on a card I never read (weight 3),
+                   plus every Dislike given after reading the book (weight 5)
+  left out         books that wait in "To send" or "Reading" without an answer: I picked them,
+                   so they are not background, and I have not judged them yet
 
 Genres are the codes written inside the FB2 file, for every book, mapped to
 plain groups with data/genre-map.json.
@@ -53,7 +56,8 @@ MODEL_PATH = DATA / "model" / "recommender.joblib"
 FOLDS = 5
 REPEATS = 4
 SEED = 20261113
-NEGATIVE_WEIGHT = 3.0  # "would never read" and Dislike
+NEGATIVE_WEIGHT = 3.0  # "would never read" and a Dislike on a card I never read
+READ_NEGATIVE_WEIGHT = 5.0  # a Dislike given after reading the book
 CLOSEST = 3
 VEC_SET = {"liked": "liked_fb2", "matched": "matched", "feed": "feed", "rated": "rated"}
 
@@ -66,7 +70,11 @@ def connect():
         sys.exit("data/books.db not found. Run the Node steps first.")
     db = sqlite3.connect(DB_PATH, timeout=60)
     db.row_factory = sqlite3.Row
-    db.execute("""CREATE TABLE IF NOT EXISTS answers (key TEXT PRIMARY KEY, answer TEXT NOT NULL, time TEXT NOT NULL)""")
+    db.execute("""CREATE TABLE IF NOT EXISTS answers (
+        key TEXT PRIMARY KEY, answer TEXT NOT NULL, time TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'card')""")
+    if not any(r["name"] == "kind" for r in db.execute("PRAGMA table_info(answers)")):
+        db.execute("ALTER TABLE answers ADD COLUMN kind TEXT NOT NULL DEFAULT 'card'")
+    db.execute("""CREATE TABLE IF NOT EXISTS book_state (key TEXT PRIMARY KEY, state TEXT NOT NULL, time TEXT NOT NULL)""")
     db.execute("""CREATE TABLE IF NOT EXISTS feed_scores (
         key TEXT PRIMARY KEY, added_at TEXT, passed INTEGER, reason TEXT, series_note TEXT,
         score REAL, percentile REAL, closest TEXT, scored_at TEXT)""")
@@ -141,6 +149,8 @@ def training_books(db, loader):
     never = {r["key"] for r in db.execute("SELECT key FROM labels WHERE label = 'never' AND status IS NULL")}
     want = {r["key"] for r in db.execute("SELECT key FROM labels WHERE label = 'want' AND status IS NULL")}
     answers = {r["key"]: r["answer"] for r in db.execute("SELECT key, answer FROM answers")}
+    after_reading = {r["key"] for r in db.execute("SELECT key FROM answers WHERE kind = 'read'")}
+    picked = {r["key"] for r in db.execute("SELECT key FROM book_state")}  # waiting in "To send" or "Reading"
     books, seen = [], set()
 
     def add(kind, rows, only=None):
@@ -150,15 +160,20 @@ def training_books(db, loader):
                 continue
             if key in want and key not in answers:
                 continue  # I said I want to read it: not a negative, not yet a positive
+            if key in picked and key not in answers:
+                continue  # picked for reading on the page, no verdict yet
             b = loader.book(kind, r)
             if b is None:
                 continue
             seen.add(key)
             if kind == "liked" or answers.get(key) == "like":
                 b["y"] = 1
+            elif answers.get(key) == "dislike" and key in after_reading:
+                b["w"] = READ_NEGATIVE_WEIGHT
             elif key in never or answers.get(key) == "dislike":
                 b["w"] = NEGATIVE_WEIGHT
             b["answer"] = answers.get(key)
+            b["read"] = key in after_reading and key in answers
             books.append(b)
 
     # liked books: genres, length and "translated" from the downloaded FB2 file, like every other book
@@ -249,6 +264,8 @@ def train(db):
         "positives": int(y.sum()), "liked_library": kinds.count("liked"),
         "page_likes": sum(1 for b in books if b.get("answer") == "like"),
         "page_dislikes": sum(1 for b in books if b.get("answer") == "dislike"),
+        "read_likes": sum(1 for b in books if b.get("answer") == "like" and b.get("read")),
+        "read_dislikes": sum(1 for b in books if b.get("answer") == "dislike" and b.get("read")),
         "never_answers": int(((w > 1) & (y == 0)).sum()) - sum(1 for b in books if b.get("answer") == "dislike"),
         "background": int((y == 0).sum()), "background_matched": kinds.count("matched"),
         "background_feed": sum(1 for b in books if b["kind"] == "feed" and b["y"] == 0),
@@ -268,7 +285,8 @@ def train(db):
 
     print(f"Trained on {info['positives']} liked books ({info['liked_library']} from my library, {info['page_likes']} Likes from the page) "
           f"against {info['background']} background books ({info['background_matched']} matched, {info['background_feed']} feed; "
-          f"{info['never_answers']} \"would never read\" and {info['page_dislikes']} Dislikes count 3 times).")
+          f"{info['never_answers']} \"would never read\" and {info['page_dislikes'] - info['read_dislikes']} Dislikes on cards count 3 times, "
+          f"{info['read_dislikes']} Dislikes after reading count 5 times).")
     print(f"Author-grouped ROC AUC: {info['auc']:.3f} (± {info['auc_sd']:.3f} over {len(metrics)} test folds).")
     print(f"Share of liked books in the top 5%: {100 * info['top5']:.1f}% (± {100 * info['top5_sd']:.1f}).")
     print(f"Model saved to {MODEL_PATH.relative_to(ROOT)}. {scored} waiting feed books rescored. Took {time.time() - t0:.0f} s.")

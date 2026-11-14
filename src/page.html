@@ -27,7 +27,8 @@
   }
   button:disabled { opacity: .5; cursor: default; }
   nav { margin: 0 0 8px; }
-  nav .btn { margin-right: 8px; }
+  nav .btn { margin: 0 8px 8px 0; padding: 11px 14px; }
+  nav .btn span { color: #6d675d; font-weight: 400; }
   nav .btn.here { background: #ece7da; font-weight: 600; }
   .status { color: #6d675d; font-size: 15px; margin: 10px 0 0; }
   .status b { color: #22201c; font-weight: 600; }
@@ -52,6 +53,12 @@
   .row { display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; -webkit-align-items: center; align-items: center; margin-top: 8px; }
   .row button, .row .btn { margin: 8px 10px 0 0; }
   .like, .ibooks { background: #2f6f4f; border-color: #2f6f4f; color: #fff; }
+  .row .big { font-size: 20px; font-weight: 600; padding: 15px 26px; min-height: 56px; }
+  .row .small { font-size: 15px; min-height: 40px; padding: 7px 14px; }
+  .prep { font-size: 14px; color: #6d675d; margin: 8px 10px 0 0; }
+  .prep.ready { color: #2f6f4f; font-weight: 600; }
+  .headrow { display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; -webkit-align-items: center; align-items: center; -webkit-justify-content: space-between; justify-content: space-between; margin-top: 32px; }
+  .headrow h2 { margin: 0 12px 4px 0; }
   .dislike { background: none; border-color: #a2452f; color: #a2452f; }
   .row .site { margin: 8px 0 0 auto; font-size: 15px; padding: 11px 0; }
   .when { color: #6d675d; font-size: 14px; }
@@ -63,7 +70,8 @@
     a { color: #7fc8a0; }
     button, .btn { border-color: #3a372f; background: #25231f; color: #ece8df; }
     nav .btn.here { background: #34312a; }
-    .status, .hint, .author, .series span, .near, .when, .empty { color: #a39c8e; }
+    .status, .hint, .author, .series span, .near, .when, .empty, .prep, nav .btn span { color: #a39c8e; }
+    .prep.ready { color: #7fc8a0; }
     .status b { color: #ece8df; }
     .busy { color: #7fc8a0; }
     .warn { background: #4a3a10; color: #ffe3a1; }
@@ -84,8 +92,11 @@
     <button id="check">Check now</button>
   </header>
   <nav>
-    <a class="btn" id="navHome" href="/">Recommendations</a>
-    <a class="btn" id="navLiked" href="/liked">Liked</a>
+    <a class="btn" id="nav_home" href="/">Recommendations <span id="count_home"></span></a>
+    <a class="btn" id="nav_tosend" href="/tosend">To send <span id="count_tosend"></span></a>
+    <a class="btn" id="nav_reading" href="/reading">Reading <span id="count_reading"></span></a>
+    <a class="btn" id="nav_liked" href="/liked">Liked <span id="count_liked"></span></a>
+    <a class="btn" id="nav_disliked" href="/disliked">Disliked <span id="count_disliked"></span></a>
   </nav>
 
   <div id="homeView">
@@ -93,7 +104,10 @@
     <p class="busy" id="busy"></p>
     <div id="warnings"></div>
 
-    <h2>Recommended</h2>
+    <div class="headrow">
+      <h2>Recommended</h2>
+      <button id="addAll">Add all to send list</button>
+    </div>
     <p class="hint">New books whose score is in the top <input id="top" type="number" min="0.5" max="100" step="0.5"> % of all books scored so far, best first.</p>
     <div id="recommended"></div>
 
@@ -104,15 +118,24 @@
     </div>
   </div>
 
-  <div id="likedView" style="display: none">
-    <p class="status" id="likedStatus">Loading ...</p>
-    <div id="liked"></div>
+  <div id="listView" style="display: none">
+    <p class="status" id="listStatus">Loading ...</p>
+    <div id="list"></div>
   </div>
 </main>
 
 <script>
 // ES5 only: this script also runs in Safari 9 on an old iPad.
-var isLiked = window.location.pathname.replace(/\/+$/, '') === '/liked';
+// The same file is every page: "/" is the recommendations, the others are lists.
+var LISTS = {
+  tosend: { title: 'To send', make: toSendRow, empty: 'The waiting list is empty. Press "Add to send list" on the recommendations page.' },
+  reading: { title: 'Reading', make: readingCard, empty: 'No books here. A book comes here when you press "Read in iBooks" on the page "To send".' },
+  liked: { title: 'Liked books', make: answerCard, empty: 'No liked books yet.' },
+  disliked: { title: 'Disliked books', make: answerCard, empty: 'No disliked books yet.' }
+};
+var view = window.location.pathname.replace(/^\/+|\/+$/g, '');
+if (!LISTS.hasOwnProperty(view)) view = 'home';
+var shown = []; // the recommended books on the screen now, best first
 var showRest = false;
 var wasBusy = false;
 var MONTHS = ['Jan', 'Feb', 'Mar', 'Apr', 'May', 'Jun', 'Jul', 'Aug', 'Sep', 'Oct', 'Nov', 'Dec'];
@@ -183,30 +206,57 @@ function setDisabled(row, off) {
   for (var i = 0; i < list.length; i++) list[i].disabled = off;
 }
 
-// A Like / Dislike / Like + iBooks button of one card.
-function answerButton(b, box, row, answer, label, cls, openEpub) {
+// Runs one POST for a card: the buttons of the row are off while it runs,
+// then the page is loaded again (the card is gone or has moved).
+function act(row, url, body, what) {
+  setDisabled(row, true);
+  api(url, body, function (err) {
+    if (err) {
+      alert('Could not ' + what + ': ' + err.message);
+      setDisabled(row, false);
+      return;
+    }
+    load();
+  });
+}
+
+function button(row, label, cls, url, body, what) {
   var btn = el('button', cls, label);
   btn.onclick = function () {
-    setDisabled(row, true);
-    api('/api/answer', { key: b.key, answer: answer }, function (err) {
-      if (err) {
-        alert('Could not save the answer: ' + err.message);
-        setDisabled(row, false);
-        return;
-      }
-      if (box.parentNode) box.parentNode.removeChild(box);
-      if (openEpub) {
-        // the server answers with the EPUB file; the iPad then offers "Open in iBooks"
-        $('busy').innerHTML = '';
-        $('busy').appendChild(document.createTextNode('Getting the book for iBooks, this can take half a minute ...'));
-        window.location.href = '/epub/' + b.id;
-        setTimeout(load, 5000);
-      } else {
-        load();
-      }
-    });
+    act(row, url, body, what);
   };
+  row.appendChild(btn);
   return btn;
+}
+
+function siteLink(row, b) {
+  var link = el('a', 'site', 'Open the book page');
+  link.href = b.link;
+  link.target = '_blank';
+  link.rel = 'noopener';
+  row.appendChild(link);
+}
+
+// A link that gets the EPUB file: on the iPad Safari then offers "Open in iBooks".
+function epubLink(row, b, label, cls) {
+  var a = el('a', cls, label);
+  a.href = '/epub/' + b.id;
+  a.onclick = function () {
+    // on a computer the file just downloads and the page stays: show the changed list
+    setTimeout(load, 3000);
+    setTimeout(load, 15000);
+  };
+  row.appendChild(a);
+  return a;
+}
+
+// Author, title and series: the top of a card on the list pages.
+function listCard(b) {
+  var box = el('div', 'card');
+  box.appendChild(el('div', 'author', b.authors || 'Author not given'));
+  box.appendChild(el('div', 'title', b.title || 'No title'));
+  if (b.series) box.appendChild(el('div', 'series', 'Series: ' + b.series + (b.seriesNo ? ', book ' + b.seriesNo : '')));
+  return box;
 }
 
 function card(b) {
@@ -259,36 +309,60 @@ function card(b) {
     box.appendChild(near);
   }
   var row = el('div', 'row');
-  row.appendChild(answerButton(b, box, row, 'like', 'Like', 'like', false));
-  row.appendChild(answerButton(b, box, row, 'like', 'Like + iBooks', 'ibooks', true));
-  row.appendChild(answerButton(b, box, row, 'dislike', 'Dislike', 'dislike', false));
-  var link = el('a', 'site', 'Open the book page');
-  link.href = b.link;
-  link.target = '_blank';
-  link.rel = 'noopener';
-  row.appendChild(link);
+  button(row, 'Add to send list', null, '/api/tosend', { key: b.key }, 'add the book to the send list');
+  button(row, 'Like', 'like', '/api/answer', { key: b.key, answer: 'like' }, 'save the answer');
+  button(row, 'Dislike', 'dislike', '/api/answer', { key: b.key, answer: 'dislike' }, 'save the answer');
+  siteLink(row, b);
   box.appendChild(row);
   return box;
 }
 
-// One book on the "Liked" page.
-function likedCard(b) {
-  var box = el('div', 'card');
-  box.appendChild(el('div', 'author', b.authors || 'Author not given'));
-  box.appendChild(el('div', 'title', b.title || 'No title'));
-  if (b.series) box.appendChild(el('div', 'series', 'Series: ' + b.series + (b.seriesNo ? ', book ' + b.seriesNo : '')));
-  box.appendChild(el('div', 'when', 'Liked ' + when(b.time) + (b.cached ? ' · the EPUB file is already on the computer' : '')));
+// One waiting book on the page "To send".
+function toSendRow(b) {
+  var box = listCard(b);
   var row = el('div', 'row');
-  var send = el('a', 'btn ibooks', 'Send to iBooks');
-  send.href = '/epub/' + b.id;
-  row.appendChild(send);
-  var link = el('a', 'site', 'Open the book page');
-  link.href = b.link;
-  link.target = '_blank';
-  link.rel = 'noopener';
-  row.appendChild(link);
+  epubLink(row, b, 'Read in iBooks', 'btn ibooks big');
+  var text = b.epub === 'ready' ? 'ready' : b.epub === 'failed' ? 'not prepared yet - a tap will fetch it' : 'preparing ...';
+  row.appendChild(el('span', b.epub === 'ready' ? 'prep ready' : 'prep', text));
+  button(row, 'Remove', 'small', '/api/unsend', { key: b.key }, 'remove the book');
   box.appendChild(row);
   return box;
+}
+
+// One sent book on the page "Reading": the verdict is given here, after reading.
+function readingCard(b) {
+  var box = listCard(b);
+  box.appendChild(el('div', 'when', 'Sent to iBooks ' + when(b.time)));
+  var row = el('div', 'row');
+  button(row, 'Like', 'like', '/api/answer', { key: b.key, answer: 'like' }, 'save the answer');
+  button(row, 'Dislike', 'dislike', '/api/answer', { key: b.key, answer: 'dislike' }, 'save the answer');
+  epubLink(row, b, 'Send again', 'btn');
+  siteLink(row, b);
+  box.appendChild(row);
+  return box;
+}
+
+// One answer on the pages "Liked" and "Disliked".
+function answerCard(b) {
+  var liked = view === 'liked';
+  var box = listCard(b);
+  box.appendChild(el('div', 'when', (liked ? 'Liked ' : 'Disliked ') + when(b.time) + (b.kind === 'read' ? ' · after reading' : ' · on a card, not read')));
+  var row = el('div', 'row');
+  if (liked) button(row, 'Change to Dislike', 'dislike', '/api/answer', { key: b.key, answer: 'dislike' }, 'change the answer');
+  else button(row, 'Change to Like', 'like', '/api/answer', { key: b.key, answer: 'like' }, 'change the answer');
+  button(row, 'Clear answer', null, '/api/clear', { key: b.key }, 'clear the answer');
+  siteLink(row, b);
+  box.appendChild(row);
+  return box;
+}
+
+// The number of books beside each list name in the menu.
+function showCounts(counts) {
+  for (var name in counts) {
+    if (!counts.hasOwnProperty(name) || !$('count_' + name)) continue;
+    clear($('count_' + name));
+    $('count_' + name).appendChild(document.createTextNode('(' + counts[name] + ')'));
+  }
 }
 
 function fill(node, books, make, emptyText) {
@@ -327,6 +401,9 @@ function render(s) {
   for (i = 0; i < warnings.length; i++) $('warnings').appendChild(el('div', 'warn', warnings[i]));
 
   if (document.activeElement !== $('top')) $('top').value = s.top;
+  shown = s.recommended;
+  $('addAll').disabled = !shown.length;
+  showCounts(s.counts);
   fill($('recommended'), s.recommended, card, 'Nothing new in the top right now. Press "Check now", or look at the rest below.');
   clear($('showRest'));
   $('showRest').appendChild(document.createTextNode(showRest ? 'Hide the rest' : 'Show the rest (' + s.rest.length + ' more books from the last ' + s.restDays + ' days)'));
@@ -336,18 +413,29 @@ function render(s) {
   if (showRest) fill($('rest'), s.rest, card, 'No other books.');
 }
 
+var STATUS = {
+  tosend: 'Waiting books, in the order you added them. "Read in iBooks" gets the EPUB file (on the iPad choose "Open in iBooks") and moves the book to "Reading". Come back to this page for the next book.',
+  reading: 'Books sent to iBooks, newest first. Give your answer after reading: a Dislike here counts more than a Dislike on a card you never read.',
+  liked: 'Your Likes, newest first. You can change or clear any answer; a cleared book goes back to where it was.',
+  disliked: 'Your Dislikes, newest first. You can change or clear any answer; a cleared book goes back to where it was.'
+};
+
 function load() {
-  if (isLiked) {
-    api('/api/liked', null, function (err, data) {
-      clear($('likedStatus'));
+  if (view !== 'home') {
+    api('/api/list/' + view, null, function (err, data) {
+      clear($('listStatus'));
       if (err) {
-        $('likedStatus').appendChild(document.createTextNode('The server does not answer. Is "npm start" running?'));
+        $('listStatus').appendChild(document.createTextNode('The server does not answer. Is "npm start" running?'));
         return;
       }
-      var n = data.books.length;
-      $('likedStatus').appendChild(document.createTextNode(
-        n + (n === 1 ? ' book' : ' books') + ' liked on this page, newest first. "Send to iBooks" gets the EPUB file; on the iPad choose "Open in iBooks".'));
-      fill($('liked'), data.books, likedCard, 'No liked books yet. Press "Like" or "Like + iBooks" on the recommendations page.');
+      var y = window.pageYOffset || 0;
+      $('listStatus').appendChild(document.createTextNode(STATUS[view]));
+      fill($('list'), data.books, LISTS[view].make, LISTS[view].empty);
+      showCounts(data.counts);
+      window.scrollTo(0, y);
+      // while EPUB files are being prepared, look again every few seconds
+      wasBusy = false;
+      for (var i = 0; i < data.books.length; i++) if (data.books[i].epub === 'preparing') wasBusy = true;
     });
     return;
   }
@@ -364,18 +452,26 @@ function load() {
   });
 }
 
-if (isLiked) {
-  document.title = 'Liked books';
+$('nav_' + view).className = 'btn here';
+if (view !== 'home') {
+  document.title = LISTS[view].title;
   clear($('heading'));
-  $('heading').appendChild(document.createTextNode('Liked books'));
+  $('heading').appendChild(document.createTextNode(LISTS[view].title));
   $('homeView').style.display = 'none';
-  $('likedView').style.display = '';
+  $('listView').style.display = '';
   $('check').style.display = 'none';
-  $('navLiked').className = 'btn here';
-} else {
-  $('navHome').className = 'btn here';
 }
 
+$('addAll').onclick = function () {
+  var keys = [];
+  for (var i = 0; i < shown.length; i++) keys.push(shown[i].key);
+  if (!keys.length || !confirm('Add all ' + keys.length + ' recommended books to the send list?')) return;
+  $('addAll').disabled = true;
+  api('/api/tosend', { keys: keys }, function (err) {
+    if (err) alert('Could not add the books: ' + err.message);
+    load();
+  });
+};
 $('check').onclick = function () {
   $('check').disabled = true;
   api('/api/check', {}, function () {

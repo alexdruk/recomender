@@ -17,9 +17,11 @@ A personal, fully local book recommender for the Flibusta daily updates.
 4. **Scores** the book with a model trained on my liked books against a
    background of ordinary books, and stores the score and its percentile among
    all feed books scored so far.
-5. **Shows** the best books on a local page with **Like** and **Dislike**
-   buttons. The model retrains after every 10 presses (a Dislike counts 3
-   times) and rescores the books that are still waiting.
+5. **Shows** the best books on a local page. I pick books for the waiting
+   list, send them to iBooks, and give **Like** or **Dislike** after reading.
+   The model retrains after every 10 answers and rescores the books that are
+   still waiting. A Dislike on a card I never read counts 3 times, a Dislike
+   after reading counts 5 times.
 
 ## Commands
 
@@ -40,10 +42,25 @@ A personal, fully local book recommender for the Flibusta daily updates.
 - **Show the rest**: the other books of the last 7 days, ranked.
 - **Status line**: last download, books analysed, books that passed the
   filters, answers given, model quality from the last training.
-- **Like + iBooks**: records a Like and sends the book as an EPUB file, so
-  Safari on the iPad offers "Open in iBooks".
-- **Liked** page (`/liked`): the books liked on the page, newest first, each
-  with "Send to iBooks".
+- Each card has **Add to send list**, **Like** and **Dislike**. Sending a book
+  is never a verdict: "Add to send list" only moves the book to the waiting
+  list. **Add all to send list** moves every recommended book there.
+- **To send** (`/tosend`): the waiting books in the order I added them. When
+  the page opens, the server gets their EPUB files in the background, one at
+  a time, and shows "ready" or "preparing". **Read in iBooks** sends the file
+  (Safari on the iPad offers "Open in iBooks") and moves the book to
+  "Reading", so the next waiting book is at the top. **Remove** puts a book
+  back in the recommendations.
+- **Reading** (`/reading`): the sent books, newest first, with **Like**,
+  **Dislike** and **Send again**. An answer given here is stored as "after
+  reading": the Like makes the book one of my liked books, the Dislike is a
+  strong negative (weight 5).
+- **Liked** and **Disliked** (`/liked`, `/disliked`): my answers, newest
+  first. Each can be changed or cleared; a cleared book goes back to where it
+  was ("Reading" or the recommendations).
+- The menu shows the number of books beside each list name.
+- Books that wait in "To send" or "Reading" are left out of training until
+  they get an answer.
 - **Check now**: runs the daily loop right away.
 - A yellow warning appears if update files left the listing before they were
   downloaded (the computer was off for too long).
@@ -62,8 +79,8 @@ change of `src/page.html`.
 
 `/epub/<id>` gets the mirror's own EPUB download (`<mirror>/b/<id>/epub`,
 second mirror if the first fails) through the polite queue, keeps it in
-`data/epub/`, records a Like for the book, and sends the file as
-`application/epub+zip` named `Author - Title.epub` in Latin letters.
+`data/epub/`, moves the book to "Reading" (no verdict is recorded), and sends
+the file as `application/epub+zip` named `Author - Title.epub` in Latin letters.
 
 ## Settings (`config.json`)
 

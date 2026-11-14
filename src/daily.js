@@ -23,12 +23,19 @@ function ensureTables(db) {
     CREATE TABLE IF NOT EXISTS feed_scores (
       key TEXT PRIMARY KEY, added_at TEXT, passed INTEGER, reason TEXT, series_note TEXT,
       score REAL, percentile REAL, closest TEXT, scored_at TEXT);
-    -- my Like / Dislike presses on the page
-    CREATE TABLE IF NOT EXISTS answers (key TEXT PRIMARY KEY, answer TEXT NOT NULL, time TEXT NOT NULL);
+    -- my Like / Dislike presses on the page. kind: 'card' = pressed on a card I never read,
+    -- 'read' = pressed on the "Reading" page, after the book was sent to iBooks
+    CREATE TABLE IF NOT EXISTS answers (key TEXT PRIMARY KEY, answer TEXT NOT NULL, time TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'card');
+    -- where a book is that I picked but did not judge yet: 'to_send' (the waiting list) or 'reading' (sent to iBooks)
+    CREATE TABLE IF NOT EXISTS book_state (key TEXT PRIMARY KEY, state TEXT NOT NULL, time TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS stylometry (
       key TEXT NOT NULL, kind TEXT NOT NULL, text_source TEXT, bytes INTEGER, features TEXT,
       PRIMARY KEY (key, kind));
   `);
+  // databases made before the "Reading" page have no "kind" column yet
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('answers') WHERE name = 'kind'").get()) {
+    db.exec("ALTER TABLE answers ADD COLUMN kind TEXT NOT NULL DEFAULT 'card'");
+  }
 }
 
 // The lowest number I liked in each series: my library plus Likes from the page.
