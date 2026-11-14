@@ -25,7 +25,8 @@ A personal, fully local book recommender for the Flibusta daily updates.
 
 | Command | What it does |
 | --- | --- |
-| `npm start` | Starts the page at http://localhost:3000. Runs the daily loop at start and then every 6 hours. |
+| `npm start` | Starts the page at http://localhost:3000 and prints the address for the iPad. Runs the daily loop at start and then every 6 hours. |
+| `npm run check-page` | Checks that `src/page.html` keeps the Safari 9 rules (ES5 script, no CSS grid). |
 | `npm run daily` | Runs the daily loop once: download, parse, filter, fingerprint, score. |
 | `npm run train` | Trains the model, saves it to `data/model/recommender.joblib`, prints the quality, rescores waiting books. |
 | `npm run autostart-on` | Starts the server at every login and keeps it running (macOS launchd). Log: `data/server.log`. |
@@ -39,21 +40,44 @@ A personal, fully local book recommender for the Flibusta daily updates.
 - **Show the rest**: the other books of the last 7 days, ranked.
 - **Status line**: last download, books analysed, books that passed the
   filters, answers given, model quality from the last training.
+- **Like + iBooks**: records a Like and sends the book as an EPUB file, so
+  Safari on the iPad offers "Open in iBooks".
+- **Liked** page (`/liked`): the books liked on the page, newest first, each
+  with "Send to iBooks".
 - **Check now**: runs the daily loop right away.
 - A yellow warning appears if update files left the listing before they were
   downloaded (the computer was off for too long).
 
+## iPad
+
+The server listens on the home network. At start it prints the addresses to
+type in Safari on the iPad (same Wi-Fi), for example
+`http://alexs-laptop.local:3000` and `http://192.168.1.14:3000`. The IP
+address can change; the `.local` name stays. To close the page to other
+devices set `"host": "127.0.0.1"` in `config.json`.
+
+The page runs in Safari 9 (iOS 9.3): the script is ES5 only and the style
+uses no CSS grid, variables or `gap`. Run `npm run check-page` after every
+change of `src/page.html`.
+
+`/epub/<id>` gets the mirror's own EPUB download (`<mirror>/b/<id>/epub`,
+second mirror if the first fails) through the polite queue, keeps it in
+`data/epub/`, records a Like for the book, and sends the file as
+`application/epub+zip` named `Author - Title.epub` in Latin letters.
+
 ## Settings (`config.json`)
 
 `filters` (each filter can be switched off or changed), `topPercent`,
-`restDays`, `retrainEveryAnswers`, `checkEveryHours`, `port`, `mirrors`,
+`restDays`, `retrainEveryAnswers`, `checkEveryHours`, `port`, `host`, `mirrors`,
 `pauseSeconds`.
 
 ## Where things are
 
 - `src/daily.js` the daily loop, `src/fetch-feed.js` the polite downloader,
   `src/parse-fb2.js` the FB2 parser, `src/stylometry.js` the style numbers.
-- `src/server.js` and `src/page.html` the page.
+- `src/server.js` and `src/page.html` the page, `src/check-page.js` the Safari 9 check.
+- `src/net.js` the polite queue: one request at a time for all programs together
+  (lock file `data/net.lock`), at least 3 seconds between requests.
 - `model/recommend.py` training and scoring, `model/embed.py` embeddings.
 - `data/` (not in git): the database `books.db`, texts, vectors, the model, the log.
 
