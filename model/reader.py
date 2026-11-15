@@ -11,7 +11,11 @@ Everything runs on this computer, through Ollama (http://127.0.0.1:11434).
 
 How a book is read
   The opening (the first 25,000 words, about 100 pages) is cut into parts at
-  paragraph ends. The model reads one part at a time and answers with strict
+  paragraph ends (config reader.partWords). The model reads the first
+  reader.readWords words of each part - with the settings in config.json that
+  is three passages of 2,500 words: from the start, the middle and the end of
+  the opening. Reading all 25,000 words takes about 3 minutes a book, too slow
+  for 600 books in 12 hours. The model reads one passage at a time and answers with strict
   JSON: a short summary of the part, a rating from 1 to 5 for every quality of
   the rubric below, the narrative voice, and up to 5 theme tags from a fixed
   list. The answer is checked; a wrong answer is asked again (3 tries).
@@ -49,6 +53,15 @@ OLLAMA = READER.get("ollama", "http://127.0.0.1:11434")
 MODEL = READER.get("model", "gemma4:12b")
 PART_WORDS = int(READER.get("partWords", 5000))
 OPENING_WORDS = int(READER.get("openingWords", 25000))
+READ_WORDS = int(READER.get("readWords", PART_WORDS))  # how many words of each part the model reads (from its start)
+
+
+def depth_text():
+    """In words: how much of a book the model reads (for the reports)."""
+    n = max(1, round(OPENING_WORDS / PART_WORDS))
+    if READ_WORDS >= PART_WORDS:
+        return f"the first {OPENING_WORDS:,} words of the book, in {n} parts"
+    return f"{n} passages of about {READ_WORDS:,} words each, spread evenly over the first {OPENING_WORDS:,} words (about 100 pages) of the book"
 NUM_CTX = int(READER.get("contextTokens", 20480))
 DAILY_BOOKS = int(READER.get("dailyBooks", 30))
 VERSION = 1  # the version of the rubric; a book read with another version is read again
@@ -327,8 +340,9 @@ def two_sentences(model, summaries):
 
 def cut_parts(text, shift=0):
     """The opening (the first 25,000 words) as a list of (text, words), cut at paragraph ends.
-    shift = 0: parts of 5,000 words. shift > 0: the same words cut at other places - the first
-    part has only "shift" words, so every later cut falls elsewhere (the stability test)."""
+    shift = 0: parts of PART_WORDS words. shift > 0: the same opening cut at other places - the first
+    part has only "shift" words, so every later cut falls elsewhere (the stability test).
+    Of each part only the first READ_WORDS words are kept (see head)."""
     words = list(WORD.finditer(text))
     total = min(len(words), OPENING_WORDS)
     if total == 0:
@@ -349,7 +363,20 @@ def cut_parts(text, shift=0):
     end = len(text) if end == -1 or end - words[total - 1].end() > 4000 else end + 1
     edges = [0] + [c for c in cuts if c < end] + [end]
     parts = [text[a:b] for a, b in zip(edges, edges[1:]) if text[a:b].strip()]
-    return [(p, len(WORD.findall(p))) for p in parts]
+    return [(p, len(WORD.findall(p))) for p in (head(p) for p in parts)]
+
+
+def head(part):
+    """The first READ_WORDS words of a part, up to the end of the paragraph. The whole part when it is not longer."""
+    if READ_WORDS >= PART_WORDS:
+        return part
+    n = 0
+    for m in WORD.finditer(part):
+        n += 1
+        if n >= READ_WORDS:
+            end = part.find("\n", m.end())
+            return part if end == -1 else part[:m.end()] if end - m.end() > 4000 else part[:end + 1]
+    return part
 
 
 # ---------------------------------------------------------------- the database
@@ -588,7 +615,8 @@ def stability_books(db, n):
 
 
 def cmd_stability(db, args):
-    """Every book is read twice: the same 25,000 words, the second time cut into parts at other places.
+    """Every book is read twice: the same opening, the second time cut at other places, so the model
+    sees other passages of the same 100 pages.
     (With temperature 0 the same input gives the same answer, so an exact repeat proves nothing;
     --repeat adds it for the first 3 books as a check.)"""
     ready(args.model)
@@ -618,7 +646,7 @@ def cmd_stability(db, args):
     result = {"model": args.model, "version": VERSION, "books": len(books), "rows": rows, "seconds_per_book": per_book,
               "exact_repeat_max_diff": same, "at": now()}
     set_meta(db, f"reader_stability:{args.model}", result)
-    print(f"\nStability of {args.model} on {len(books)} books, each read twice (same words, cut at other places). {per_book:.0f} s per reading.")
+    print(f"\nStability of {args.model} on {len(books)} books, each read twice (the same 100 pages, other passages). {per_book:.0f} s per reading.")
     print(f"{'quality':42s} {'agreement':>9s} {'avg diff':>9s} {'spread':>7s} {'mean':>6s}")
     for r in rows:
         print(f"{r['name']:42s} {r['r']:9.2f} {r['diff']:9.2f} {r['spread']:7.2f} {r['mean']:6.2f}")

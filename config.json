@@ -38,5 +38,14 @@
     "minWords": 10000,
     "skipLibraryBooks": true,
     "seriesRule": true
+  },
+  "reader": {
+    "ollama": "http://127.0.0.1:11434",
+    "model": "qwen3.5:9b",
+    "openingWords": 25000,
+    "partWords": 8400,
+    "readWords": 2500,
+    "contextTokens": 10240,
+    "dailyBooks": 30
   }
 }

@@ -84,7 +84,7 @@ def size(d):
 def markdown(p):
     when = datetime.fromisoformat(p["built_at"]).strftime("%d %b %Y, %H:%M")
     out = ["# Portrait of my taste", "",
-           f"Built {when} from what the reading model ({p['model']}) says about the opening (the first 25,000 words) of each book. "
+           f"Built {when} from what the reading model ({p['model']}) says about each book. It reads {reader.depth_text()}. "
            f"**{p['library']}** books of my library against **{p['background']}** ordinary new books picked at random from the daily updates. "
            "Each quality is rated from 1 to 5.", ""]
     if not p["ready"]:

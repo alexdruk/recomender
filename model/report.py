@@ -13,6 +13,10 @@ from pathlib import Path
 
 import numpy as np
 
+import sys
+sys.path.insert(0, str(Path(__file__).resolve().parent))
+import reader  # noqa: E402
+
 ROOT = Path(__file__).resolve().parent.parent
 CONFIG = json.loads((ROOT / "config.json").read_text(encoding="utf-8"))
 DATA = ROOT / CONFIG.get("dataDir", "data")
@@ -298,7 +302,7 @@ def stability_section(d):
     rows = "".join(f'<tr><td>{esc(r["name"])}</td><td class="n">{"—" if r["r"] != r["r"] else f"{r["r"]:.2f}"}</td><td class="n">{r["diff"]:.2f}</td>'
                    f'<td class="n">{r["mean"]:.2f}</td><td class="n">{r["spread"]:.2f}</td></tr>' for r in st["rows"])
     return (f'<h2>Does the reading model agree with itself?</h2><div class="card"><p class="muted">{st["books"]} books were read twice by {esc(st["model"])}: '
-            "the same 25,000 words, the second time cut into parts at other places. Agreement 1.00 means the two readings rank the books the same way; "
+            f"the second time the same 100 pages were cut at other places, so the model saw other passages of the same book (it reads {reader.depth_text()}). " "Agreement 1.00 means the two readings rank the books the same way; "
             "the average difference is in points of the 1 to 5 scale (for the narrative voice: in shares from 0 to 1).</p>"
             '<table><tr><th>Quality</th><th class="n">Agreement</th><th class="n">Average difference</th><th class="n">Average rating</th>'
             f'<th class="n">Spread between books</th></tr>{rows}</table></div>')

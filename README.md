@@ -58,6 +58,51 @@ A personal, fully local book recommender for the Flibusta daily updates.
   distribution of model scores, the strongest factors, and my scores against
   the predictions.
 
+## The reading model
+
+A local language model reads every interesting book and rates it. Nothing
+leaves this computer.
+
+Setup (once):
+
+```
+brew install ollama
+brew services start ollama
+ollama pull qwen3.5:9b
+```
+
+- The model is `qwen3.5:9b` (about 10 GB in memory; together with the
+  embedding model it stays under 14 GB). It was picked from three candidates
+  by a stability test: it gives the same book almost the same ratings when it
+  reads other passages of it, and it uses the whole 1 to 5 scale.
+- It reads three passages of 2,500 words: from the start, the middle and the
+  end of the first 100 pages (25,000 words). That takes about 70 seconds a
+  book. Reading all 25,000 words takes 3 minutes a book, too slow for the
+  first run over 600 books.
+- For each passage it answers with checked JSON (a wrong answer is asked
+  again, up to 3 times, temperature 0): 13 qualities rated 1 to 5 (plot pace,
+  plot originality, depth of characters, psychological complexity, quality of
+  dialogue, humour and irony, emotional intensity, darkness and violence,
+  weight of the romance line, weight of explicit content, world-building,
+  richness of language, literary polish), the narrative voice (first or third
+  person, tone), up to 5 themes from a fixed list, and a short summary. The
+  book gets the average of its passages and a two-sentence summary.
+- The ratings are a new group of factors in the scoring model. There are now
+  two models: the **cheap** one (everything except the reading) scores every
+  new book; the **full** one (with the reading) gives the final score of the
+  books that were read. Every training compares the two in the author-grouped
+  test, with shuffled ratings as a noise control, and the model report says
+  plainly whether the reading beats the noise.
+- Daily loop: the cheap model scores every new book, the reading model reads
+  the best 30 of the day, and their final score uses its ratings. Books that
+  were not read keep the cheap score and carry the mark "not read by the
+  model".
+- A card of a read book shows the two-sentence summary, the themes, and the
+  three qualities that most raised and most lowered its score.
+- `reports/portrait.md` is the portrait of my taste: my library against
+  ordinary new books, quality by quality and theme by theme. The same
+  comparison is a chart in `reports/model.html`.
+
 ## Commands
 
 | Command | What it does |
@@ -68,6 +113,10 @@ A personal, fully local book recommender for the Flibusta daily updates.
 | `npm run ratings` | Refreshes the reader ratings (at most once a day) and looks up every book. `node src/ratings.js --force` downloads now. |
 | `npm run cleanup` | Runs the automatic cleaning once (it also runs at the end of every daily loop). `node src/cleanup.js --dry-run` only says what would be deleted. |
 | `npm run train` | Trains the text check and the model, saves the model to `data/model/recommender.joblib`, prints the quality, rescores the feed books, rebuilds `reports/model.html`. |
+| `npm run read-all` | The long run of the reading model: all library books, all scored books and random background books, as many as fit in 12 hours. It can be stopped and started again; it trains the model at the end. Log: `data/logs/reader.log`. |
+| `npm run read-status` | One line: how far the long run is. |
+| `npm run read-check` | Stability test: reads 20 books twice and prints the agreement for each quality. |
+| `npm run portrait` | Rebuilds `reports/portrait.md`. |
 | `npm run autostart-on` | Starts the server at every login and keeps it running (macOS launchd). Log: `data/server.log`. |
 | `npm run autostart-off` | Stops the server and removes the autostart job. |
 
@@ -143,7 +192,10 @@ touched.
 `filters` (each filter can be switched off or changed), `topPercent`,
 `restDays`, `retrainEveryAnswers`, `ratingsEveryHours` (never less than 24),
 `rescoreDays`, `checkEveryHours`, `port`, `host`, `mirrors`,
-`pauseSeconds`, `cleanup` (`feedTextDays`, `epubDays`).
+`pauseSeconds`, `cleanup` (`feedTextDays`, `epubDays`),
+`reader` (`model`, `openingWords`, `partWords`, `readWords`, `contextTokens`,
+`dailyBooks`). After a change of the reader model or of the passage sizes the
+books must be read again (`npm run read-all`).
 
 ## Where things are
 
@@ -157,6 +209,8 @@ touched.
 - `model/recommend.py` training and scoring, `model/fiction_check.py` the text
   check against non-fiction, `model/report.py` the model report,
   `model/embed.py` embeddings.
+- `model/reader.py` the reading model (tables `reading_parts` and `readings`),
+  `model/portrait.py` the portrait of my taste.
 - `data/` (not in git): the database `books.db`, texts, vectors, the model, the log.
 
 Needs Node 22 (`npm install`) and Python in `.venv`
