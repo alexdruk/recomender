@@ -299,7 +299,9 @@ def stability_section(d):
     st = d.get("stability")
     if not st:
         return ""
-    rows = "".join(f'<tr><td>{esc(r["name"])}</td><td class="n">{"—" if r["r"] != r["r"] else f"{r["r"]:.2f}"}</td><td class="n">{r["diff"]:.2f}</td>'
+    dropped = set(reader.READER.get("dropFactors", []))
+    out = lambda r: ' <span class="muted">(left out of the model)</span>' if (r["id"] in dropped or r["id"].replace("tone:", "tone_") in dropped) else ""
+    rows = "".join(f'<tr><td>{esc(r["name"])}{out(r)}</td><td class="n">{"—" if r["r"] != r["r"] else f"{r["r"]:.2f}"}</td><td class="n">{r["diff"]:.2f}</td>'
                    f'<td class="n">{r["mean"]:.2f}</td><td class="n">{r["spread"]:.2f}</td></tr>' for r in st["rows"])
     return (f'<h2>Does the reading model agree with itself?</h2><div class="card"><p class="muted">{st["books"]} books were read twice by {esc(st["model"])}: '
             f"the second time the same 100 pages were cut at other places, so the model saw other passages of the same book (it reads {reader.depth_text()}). " "Agreement 1.00 means the two readings rank the books the same way; "

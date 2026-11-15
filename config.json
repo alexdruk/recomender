@@ -46,6 +46,14 @@
     "partWords": 8400,
     "readWords": 2500,
     "contextTokens": 10240,
-    "dailyBooks": 30
+    "dailyBooks": 30,
+    "dropFactors": [
+      "pace",
+      "explicit",
+      "tone_tense",
+      "tone_lyrical",
+      "tone_dark",
+      "tone_dry"
+    ]
   }
 }

@@ -101,6 +101,11 @@ MIN_READ = 60  # the full model is trained from this many books read by the read
 READ_NAMES = ([f"reading: {reader.Q_NAMES[q]}" for q in reader.Q_IDS] + ["reading: first-person narration"]
               + [f"reading: {reader.TONE_NAMES[t]} tone" for t in reader.TONES])
 N_QUALITIES = len(reader.Q_IDS)
+# Reading factors left out of the model because the reading model does not agree with itself on them
+# (stability test, agreement under 0.6 or never used). They are still rated and shown in the tables.
+READ_IDS = list(reader.Q_IDS) + ["person_first"] + [f"tone_{t}" for t in reader.TONES]
+READ_DROPPED = set(reader.READER.get("dropFactors", []))
+READ_USE = np.array([0.0 if i in READ_DROPPED else 1.0 for i in READ_IDS])
 
 KINDS = {"ridge": "ridge regression", "gbm": "gradient boosting"}
 ALPHAS = (3.0, 30.0, 300.0, 3000.0)  # strength of the ridge "keep it simple" penalty, chosen inside each training part
@@ -369,7 +374,7 @@ class Prep:
         miss = np.isnan(out[:, 0])
         if miss.any():
             out[miss] = self.l_pool[kh[miss] % len(self.l_pool)]
-        return np.clip((out - self.l_mean) / self.l_sd, -5, 5)
+        return np.clip((out - self.l_mean) / self.l_sd, -5, 5) * READ_USE
 
     def _fill(self, S):
         return np.where(np.isnan(S), self.s_med, S)
