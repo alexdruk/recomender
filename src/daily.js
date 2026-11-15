@@ -4,10 +4,13 @@
 //   1. fetch-feed.js: read the listing at <mirror>/daily/, download every
 //      f.fb2.*.zip above the last processed id (one at a time, with pauses),
 //      parse the books, delete the zip. A gap in the listing is logged.
-//   2. filter every feed book that has no answer yet (settings: config.json "filters")
-//   3. fingerprint the books that passed: stylometry here, embeddings in Python
-//   4. score them with the saved model and store score and percentile ("feed_scores")
-//   5. cleanup.js: delete parsed zips, feed texts older than 14 days that are in
+//   2. ratings.js: at most once a day download the reader ratings dump, then
+//      look up the votes, the author record and the series record of every book
+//   3. filter every feed book that has no score from me yet (settings: config.json "filters")
+//   4. fingerprint the books that passed: stylometry here, embeddings in Python
+//   5. score the new books with the saved model, and score again every unanswered
+//      book of the last 60 days, because its ratings may have changed ("feed_scores")
+//   6. cleanup.js: delete parsed zips, feed texts older than 14 days that are in
 //      no list, and cached EPUB files older than 30 days
 //
 // Safe to run again at any time: nothing is downloaded or measured twice.
@@ -19,6 +22,7 @@ const c = require('./common');
 const fetchFeed = require('./fetch-feed');
 const { measure } = require('./stylometry');
 const cleanup = require('./cleanup');
+const ratings = require('./ratings');
 
 function ensureTables(db) {
   db.exec(`
@@ -26,9 +30,11 @@ function ensureTables(db) {
     CREATE TABLE IF NOT EXISTS feed_scores (
       key TEXT PRIMARY KEY, added_at TEXT, passed INTEGER, reason TEXT, series_note TEXT,
       score REAL, percentile REAL, closest TEXT, scored_at TEXT);
-    -- my Like / Dislike presses on the page. kind: 'card' = pressed on a card I never read,
-    -- 'read' = pressed on the "Reading" page, after the book was sent to iBooks
-    CREATE TABLE IF NOT EXISTS answers (key TEXT PRIMARY KEY, answer TEXT NOT NULL, time TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'card');
+    -- my scores from 1 (bad) to 5 (excellent). kind: 'card' = given from the card only,
+    -- 'read' = given after the book was sent to iBooks. rescored = 0: an old Like (now 4) or
+    -- Dislike (now 2) that I have not rescored yet. "answer" is the old word, kept in step with the score.
+    CREATE TABLE IF NOT EXISTS answers (key TEXT PRIMARY KEY, answer TEXT NOT NULL, time TEXT NOT NULL, kind TEXT NOT NULL DEFAULT 'card',
+      score INTEGER, rescored INTEGER NOT NULL DEFAULT 1);
     -- where a book is that I picked but did not judge yet: 'to_send' (the waiting list) or 'reading' (sent to iBooks)
     CREATE TABLE IF NOT EXISTS book_state (key TEXT PRIMARY KEY, state TEXT NOT NULL, time TEXT NOT NULL);
     CREATE TABLE IF NOT EXISTS stylometry (
@@ -39,15 +45,27 @@ function ensureTables(db) {
   if (!db.prepare("SELECT 1 FROM pragma_table_info('answers') WHERE name = 'kind'").get()) {
     db.exec("ALTER TABLE answers ADD COLUMN kind TEXT NOT NULL DEFAULT 'card'");
   }
+  // databases made before the scores: a Like becomes 4, a Dislike 2, both marked "not rescored"
+  if (!db.prepare("SELECT 1 FROM pragma_table_info('answers') WHERE name = 'score'").get()) {
+    db.exec(`ALTER TABLE answers ADD COLUMN score INTEGER;
+      ALTER TABLE answers ADD COLUMN rescored INTEGER NOT NULL DEFAULT 1;
+      UPDATE answers SET score = CASE answer WHEN 'like' THEN 4 ELSE 2 END, rescored = 0 WHERE score IS NULL;`);
+  }
+  // votes: the number of votes the book had when it was last scored; note: "now rated";
+  // nf_prob: the chance that the text is non-fiction (the text check in model/fiction_check.py)
+  for (const [name, type] of [['votes', 'INTEGER'], ['note', 'TEXT'], ['nf_prob', 'REAL']]) {
+    if (!db.prepare("SELECT 1 FROM pragma_table_info('feed_scores') WHERE name = ?").get(name)) db.exec(`ALTER TABLE feed_scores ADD COLUMN ${name} ${type}`);
+  }
+  ratings.ensureFactsTable(db);
 }
 
-// The lowest number I liked in each series: my library plus Likes from the page.
+// The lowest number I liked in each series: my library plus the books I scored 4 or 5.
 function likedSeries(db) {
   const min = new Map();
   const rows = db.prepare(`
     SELECT series, series_no FROM books WHERE series IS NOT NULL
     UNION ALL SELECT series, series_no FROM parsed WHERE source = 'liked_fb2' AND series IS NOT NULL
-    UNION ALL SELECT f.series, f.series_no FROM feed_books f JOIN answers a ON a.key = f.key AND a.answer = 'like' WHERE f.series IS NOT NULL`).all();
+    UNION ALL SELECT f.series, f.series_no FROM feed_books f JOIN answers a ON a.key = f.key AND a.score >= 4 WHERE f.series IS NOT NULL`).all();
   for (const r of rows) {
     const name = c.normaliseText(r.series);
     const no = Number(r.series_no);
@@ -63,8 +81,18 @@ function judge(book, f, ctx) {
   if (book.parse_status === 'failed') return fail('the file could not be read');
   if (f.russianOnly && book.lang !== 'ru') return fail(`language is ${book.lang || 'not given'}`);
   if (f.fictionOnly) {
-    const kinds = c.jsonList(book.genres).map((g) => ctx.map.groups[ctx.map.codes[g]]);
-    if (kinds.includes('nonfiction') || !kinds.includes('fiction')) return fail('not fiction');
+    // strict: every genre code (inside the file, and in the catalog when it knows the book)
+    // must be a known code and none may be non-fiction; at least one must say fiction
+    let fiction = false;
+    for (const g of new Set([...c.jsonList(book.genres), ...c.jsonList(book.cat_genres)])) {
+      if (!Object.hasOwn(ctx.map.codes, g)) return fail(`not fiction: unknown genre code "${g}"`);
+      const kind = ctx.map.groups[ctx.map.codes[g]];
+      if (kind === 'nonfiction') return fail(`not fiction: genre code "${g}" is non-fiction`);
+      if (kind === 'fiction') fiction = true;
+    }
+    if (!fiction) return fail('not fiction: no fiction genre code');
+    // the text check: the codes say fiction, the text reads like non-fiction
+    if (ctx.textLimit != null && ctx.nf.get(book.key) >= ctx.textLimit) return fail('not fiction: the text reads like non-fiction');
   }
   if (f.skipCollections && book.is_collection) return fail('a collection');
   if (f.minWords && (book.words || 0) < f.minWords) return fail(`shorter than ${f.minWords} words`);
@@ -89,6 +117,8 @@ function filterBooks(db, cfg) {
     map,
     liked: likedSeries(db),
     readIds: new Set(hasMarks ? db.prepare('SELECT id FROM read_marks').all().map((r) => String(r.id)) : []),
+    nf: new Map(db.prepare('SELECT key, nf_prob FROM feed_scores WHERE nf_prob IS NOT NULL').all().map((r) => [r.key, r.nf_prob])),
+    textLimit: ((check) => (check && check.ready ? check.threshold : null))(c.getMeta(db, 'fiction_check')),
   };
   // when the book arrived: the time its update file was processed
   const fileTime = new Map(db.prepare('SELECT name, processed_at FROM feed_files').all().map((r) => [r.name, r.processed_at.replace(' ', 'T') + 'Z']));
@@ -143,6 +173,8 @@ async function main() {
   }
   const db = c.openDb(cfg);
   db.pragma('busy_timeout = 60000');
+  ensureTables(db);
+  await ratings.update(db, cfg, { log: (m) => console.log(m.startsWith('Ratings') ? 'Daily loop: ' + m : m) });
   const stats = filterBooks(db, cfg);
   const measured = measureBooks(db, cfg);
   c.setMeta(db, 'daily_last_run', { time: started, error: downloadError, fresh: stats.fresh, freshPassed: stats.freshPassed });
@@ -160,7 +192,7 @@ async function main() {
     process.exitCode = 1;
     return; // no cleaning: the texts may still be needed
   }
-  // 5. cleaning: parsed zips, old feed texts that are in no list, old EPUB files
+  // 6. cleaning: parsed zips, old feed texts that are in no list, old EPUB files
   const db2 = c.openDb(cfg);
   db2.pragma('busy_timeout = 60000');
   try {
