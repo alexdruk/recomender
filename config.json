@@ -25,6 +25,8 @@
   "topPercent": 5,
   "restDays": 7,
   "retrainEveryAnswers": 10,
+  "ratingsEveryHours": 24,
+  "rescoreDays": 60,
   "cleanup": {
     "feedTextDays": 14,
     "epubDays": 30

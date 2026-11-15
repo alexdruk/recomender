@@ -47,6 +47,9 @@ function loadConfig() {
     topPercent: Number(cfg.topPercent) || 5,
     restDays: Number(cfg.restDays) || 7,
     retrainEveryAnswers: Number(cfg.retrainEveryAnswers) || 10,
+    // reader ratings: how often the dump is downloaded, and how far back unanswered books are rescored
+    ratingsEveryHours: Math.max(24, Number(cfg.ratingsEveryHours) || 24),
+    rescoreDays: Math.max(1, Number(cfg.rescoreDays) || 60),
     filters: Object.assign({ russianOnly: true, fictionOnly: true, skipCollections: true, minWords: 10000, skipLibraryBooks: true, seriesRule: true }, cfg.filters || {}),
     // automatic cleaning at the end of the daily loop (src/cleanup.js)
     cleanup: {

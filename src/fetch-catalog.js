@@ -21,7 +21,7 @@ const INDEXES = {
   libtranslator: ['BookId'],
   libgenre: ['BookId'],
   libgenrelist: ['GenreId'],
-  libseq: ['BookId'],
+  libseq: ['BookId', 'SeqId'],
   libseqname: ['SeqId'],
   librate: ['BookId'],
   libjoinedbooks: ['BadId'],
@@ -226,4 +226,4 @@ if (require.main === module) {
   });
 }
 
-module.exports = { main, parseInsertLine };
+module.exports = { main, parseInsertLine, loadDump, openCatalog };
