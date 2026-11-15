@@ -7,21 +7,56 @@ A personal, fully local book recommender for the Flibusta daily updates.
 1. **Downloads** the daily update files (`f.fb2.*.zip`) from `https://flibusta.is/daily/`
    (fallback `https://flibusta.site/daily/`), one at a time, with a pause of at
    least 3 seconds between requests. Each zip is parsed and then deleted.
-2. **Filters** the new books: Russian language, fiction, not a collection, at
+2. **Refreshes the reader ratings** at most once a day: the ratings dump of the
+   library and two small dumps (which book belongs to which author and series),
+   through the same polite queue. The files are kept in `data/sql/`.
+3. **Filters** the new books: Russian language, fiction, not a collection, at
    least 10,000 words, not already in my library, and the series rule
-   (standalone, or book 1, or a series where I already liked an earlier book).
-3. **Fingerprints** every book that passed, from its text only: stylometry,
-   embeddings of the whole text and of the opening (first 25,000 words, model
-   bge-m3), genre codes from the FB2 file, length, translated or not.
-   Ratings, votes, comments and the year are never used.
-4. **Scores** the book with a model trained on my liked books against a
-   background of ordinary books, and stores the score and its percentile among
-   all feed books scored so far.
-5. **Shows** the best books on a local page. I pick books for the waiting
-   list, send them to iBooks, and give **Like** or **Dislike** after reading.
-   The model retrains after every 10 answers and rescores the books that are
-   still waiting. A Dislike on a card I never read counts 3 times, a Dislike
-   after reading counts 5 times.
+   (standalone, or book 1, or a series where I scored an earlier book 4 or 5).
+   The fiction rule is strict: a book is rejected if **any** of its genre codes
+   is non-fiction or unknown, and it needs at least one fiction code. Then a
+   **text check** (a small fiction-against-non-fiction classifier on the text
+   embedding) sets aside books whose codes say fiction but whose text does not.
+4. **Fingerprints** every book that passed: stylometry, embeddings of the whole
+   text and of the opening (first 25,000 words, model bge-m3), genre codes from
+   the FB2 file, length, translated or not, plus the reader ratings:
+   - the book's own rating, shrunk: `(sum of marks + average x 5) / (votes + 5)`,
+     where "average" is the real catalog average for fiction (about 3.4). A book
+     without votes sits exactly at that average: **no votes is never bad**;
+   - the number of votes (log);
+   - the author's track record: the shrunk rating over all **earlier** books of
+     the same author, and how many of them have marks. The book itself is never
+     part of it. Neutral when the author is new;
+   - the same track record for the series, when the book continues one.
+5. **Scores** the book with a model that predicts **my score from 1 to 5**, and
+   stores the predicted score and its percentile among all feed books. Every
+   unanswered book of the last 60 days is scored again in each loop, so a book
+   moves when votes arrive. A book that rises into the recommended range after
+   new votes gets the note "now rated". A book with at least 5 votes and an
+   average below 3 is hidden.
+6. **Shows** the best books on a local page. I pick books for the waiting
+   list, send them to iBooks, and give each a **score from 1 to 5** (1 = bad,
+   3 = average, 5 = excellent), from the card or after reading. The model
+   retrains after every 10 new or changed scores.
+
+## The model
+
+- Target: my kept library books count as 5; a scored book counts as its score
+  (weight 5 when scored after reading, weight 2 when scored from the card
+  only); background books count as 2 with the low weight 0.3; my old "would
+  never read" answers count as 1.
+- In training the book's own rating is hidden for a random half of the books,
+  so the model learns to score both rated and unrated books.
+- Ridge regression and gradient boosting are both tried; the one that ranks
+  better in an author-grouped test is kept.
+- From 30 scores on, the status line shows how well the ranking agrees with my
+  scores on books the model had not seen (Spearman correlation), and my average
+  score for its top 10.
+- `reports/model.html` (menu: **Model report**) is rebuilt after every
+  training: the training data, the factors used and not used, the ranking
+  quality of each group of factors (for rated and for unrated books), the
+  distribution of model scores, the strongest factors, and my scores against
+  the predictions.
 
 ## Commands
 
@@ -29,9 +64,10 @@ A personal, fully local book recommender for the Flibusta daily updates.
 | --- | --- |
 | `npm start` | Starts the page at http://localhost:3000 and prints the address for the iPad. Runs the daily loop at start and then every 6 hours. |
 | `npm run check-page` | Checks that `src/page.html` keeps the Safari 9 rules (ES5 script, no CSS grid). |
-| `npm run daily` | Runs the daily loop once: download, parse, filter, fingerprint, score. |
+| `npm run daily` | Runs the daily loop once: download, ratings, filter, fingerprint, score. |
+| `npm run ratings` | Refreshes the reader ratings (at most once a day) and looks up every book. `node src/ratings.js --force` downloads now. |
 | `npm run cleanup` | Runs the automatic cleaning once (it also runs at the end of every daily loop). `node src/cleanup.js --dry-run` only says what would be deleted. |
-| `npm run train` | Trains the model, saves it to `data/model/recommender.joblib`, prints the quality, rescores waiting books. |
+| `npm run train` | Trains the text check and the model, saves the model to `data/model/recommender.joblib`, prints the quality, rescores the feed books, rebuilds `reports/model.html`. |
 | `npm run autostart-on` | Starts the server at every login and keeps it running (macOS launchd). Log: `data/server.log`. |
 | `npm run autostart-off` | Stops the server and removes the autostart job. |
 
@@ -39,26 +75,31 @@ A personal, fully local book recommender for the Flibusta daily updates.
 
 - **Recommended**: unanswered books in the top 5% (the share can be changed on
   the page), best first. Each card shows author, title, series, genres, length,
-  annotation, score, the 3 liked books closest by text, and a link to the book.
+  the predicted score, "rating 4.3 from 12 votes" or "no votes yet", the
+  author's track record in the same form (and the series record), the
+  annotation, the 3 liked books closest by text, and a link to the book.
 - **Show the rest**: the other books of the last 7 days, ranked.
-- **Status line**: last download, books analysed, books that passed the
-  filters, answers given, model quality from the last training.
-- Each card has **Add to send list**, **Like** and **Dislike**. Sending a book
-  is never a verdict: "Add to send list" only moves the book to the waiting
-  list. **Add all to send list** moves every recommended book there.
+- **Status line**: last download, when the ratings were refreshed, books
+  analysed, books that passed the filters, books hidden for a low rating,
+  scores given, and the model quality from the last training.
+- Each card has **Add to send list** and five score buttons, **1 to 5**.
+  Sending a book is never a verdict: "Add to send list" only moves the book to
+  the waiting list. **Add all to send list** moves every recommended book there.
 - **To send** (`/tosend`): the waiting books in the order I added them. When
   the page opens, the server gets their EPUB files in the background, one at
   a time, and shows "ready" or "preparing". **Read in iBooks** sends the file
   (Safari on the iPad offers "Open in iBooks") and moves the book to
   "Reading", so the next waiting book is at the top. **Remove** puts a book
   back in the recommendations.
-- **Reading** (`/reading`): the sent books, newest first, with **Like**,
-  **Dislike** and **Send again**. An answer given here is stored as "after
-  reading": the Like makes the book one of my liked books, the Dislike is a
-  strong negative (weight 5).
-- **Liked** and **Disliked** (`/liked`, `/disliked`): my answers, newest
-  first. Each can be changed or cleared; a cleared book goes back to where it
-  was ("Reading" or the recommendations).
+- **Reading** (`/reading`): the sent books, newest first, with the five score
+  buttons and **Send again**. A score given here is stored as "after reading"
+  and counts more (weight 5) than a score from the card only (weight 2).
+- **My scores** (`/scores`): every book I scored or was sent, newest first,
+  with its current score and the five buttons, so any score can be changed at
+  any time. Old Likes start as 4 and old Dislikes as 2, marked "not rescored"
+  until I press a number. **Clear score** puts a book back where it was
+  ("Reading" or the recommendations). There is no queue of books I have not seen.
+- **Model report** (`/report`): opens `reports/model.html`.
 - The menu shows the number of books beside each list name.
 - Books that wait in "To send" or "Reading" are left out of training until
   they get an answer.
@@ -89,8 +130,8 @@ At the end of every daily loop `src/cleanup.js` deletes:
 
 - update zips that were already parsed;
 - texts of feed books older than 14 days that are in no list. A text is kept
-  while the book is on the recommendations page, in "To send", "Reading",
-  "Liked" or "Disliked", or while its vectors are not saved yet;
+  while the book is on the recommendations page, in "To send", "Reading" or
+  "My scores", or while its vectors are not saved yet;
 - cached EPUB files older than 30 days, except books still waiting in
   "To send". A deleted EPUB is simply downloaded again if I ask for it.
 
@@ -100,7 +141,8 @@ touched.
 ## Settings (`config.json`)
 
 `filters` (each filter can be switched off or changed), `topPercent`,
-`restDays`, `retrainEveryAnswers`, `checkEveryHours`, `port`, `host`, `mirrors`,
+`restDays`, `retrainEveryAnswers`, `ratingsEveryHours` (never less than 24),
+`rescoreDays`, `checkEveryHours`, `port`, `host`, `mirrors`,
 `pauseSeconds`, `cleanup` (`feedTextDays`, `epubDays`).
 
 ## Where things are
@@ -110,7 +152,11 @@ touched.
 - `src/server.js` and `src/page.html` the page, `src/check-page.js` the Safari 9 check.
 - `src/net.js` the polite queue: one request at a time for all programs together
   (lock file `data/net.lock`), at least 3 seconds between requests.
-- `model/recommend.py` training and scoring, `model/embed.py` embeddings.
+- `src/ratings.js` the reader ratings: the daily download and the votes, author
+  record and series record of every book (table `rating_facts`).
+- `model/recommend.py` training and scoring, `model/fiction_check.py` the text
+  check against non-fiction, `model/report.py` the model report,
+  `model/embed.py` embeddings.
 - `data/` (not in git): the database `books.db`, texts, vectors, the model, the log.
 
 Needs Node 22 (`npm install`) and Python in `.venv`

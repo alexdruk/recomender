@@ -1,16 +1,16 @@
 'use strict';
 // The recommendations page:  npm start   ->  http://localhost:3000
 //
-// Shows the feed books ranked by the model, takes Like / Dislike, retrains the
-// model after every 10 answers, and runs the daily loop at start and then
-// every 6 hours (config.json "checkEveryHours"). Everything is local.
+// Shows the feed books ranked by the model, takes my scores from 1 to 5,
+// retrains the model after every 10 scores, and runs the daily loop at start
+// and then every 6 hours (config.json "checkEveryHours"). Everything is local.
 //
 // The page is also reachable from the home network (an old iPad), and
 // /epub/<id> hands a book to the iPad as an EPUB file for iBooks.
 //
 // Sending a book is not a verdict. A book goes:
 //   recommendations -> "To send" (the waiting list) -> "Reading" (sent to iBooks)
-//   -> "Liked" or "Disliked" (my answer, which can be changed or cleared later).
+//   -> "My scores" (my score from 1 to 5, which can be changed or cleared at any time).
 
 const fs = require('node:fs');
 const os = require('node:os');
@@ -20,6 +20,7 @@ const express = require('express');
 const c = require('./common');
 const net = require('./net');
 const { ensureTables } = require('./daily');
+const { FALLBACK_AVERAGE } = require('./ratings');
 
 const cfg = c.loadConfig();
 net.setPause(cfg.pauseSeconds);
@@ -66,6 +67,15 @@ function next() {
 
 // ---------------------------------------------------------------- what the page shows
 
+// A book that readers rated badly is hidden: at least 5 votes and an average below 3.
+// A book without votes is never hidden for that.
+const LOW_VOTES = 5;
+const LOW_AVERAGE = 3;
+// "s" is feed_scores: the books that can be shown as recommendations
+const OPEN = `s.passed = 1 AND s.score IS NOT NULL
+  AND s.key NOT IN (SELECT key FROM answers) AND s.key NOT IN (SELECT key FROM book_state)
+  AND NOT EXISTS (SELECT 1 FROM rating_facts q WHERE q.key = s.key AND q.votes >= ${LOW_VOTES} AND q.sum < ${LOW_AVERAGE} * q.votes)`;
+
 function topPercent() {
   const v = Number(c.getMeta(db, 'top_percent'));
   return v > 0 && v <= 100 ? v : cfg.topPercent;
@@ -79,12 +89,14 @@ function state() {
   const map = JSON.parse(fs.readFileSync(cfg.genreMapPath, 'utf8'));
   const since = new Date(Date.now() - cfg.restDays * 86400000).toISOString();
   const rows = db.prepare(`
-    SELECT s.key, s.score, s.percentile, s.closest, s.series_note, s.added_at,
-           f.authors, f.title, f.series, f.series_no, f.genres, f.words, f.annotation, f.is_translation
-    FROM feed_scores s JOIN feed_books f ON f.key = s.key
-    WHERE s.passed = 1 AND s.score IS NOT NULL
-      AND s.key NOT IN (SELECT key FROM answers) AND s.key NOT IN (SELECT key FROM book_state)
+    SELECT s.key, s.score, s.percentile, s.closest, s.series_note, s.added_at, s.note,
+           f.authors, f.title, f.series, f.series_no, f.genres, f.words, f.annotation, f.is_translation,
+           r.votes, r.sum, r.a_known, r.a_books, r.a_votes, r.a_sum, r.s_known, r.s_books, r.s_votes, r.s_sum
+    FROM feed_scores s JOIN feed_books f ON f.key = s.key LEFT JOIN rating_facts r ON r.key = s.key
+    WHERE ${OPEN}
     ORDER BY s.score DESC`).all();
+  // "rating 4.3 from 12 votes": the plain average; null when nobody voted
+  const rating = (votes, sum, books) => (votes > 0 ? { votes, avg: sum / votes, books: books || 0 } : null);
   const card = (r) => {
     const groups = [];
     for (const g of c.jsonList(r.genres)) if (map.codes[g] && !groups.includes(map.codes[g])) groups.push(map.codes[g]);
@@ -102,12 +114,21 @@ function state() {
       annotation: r.annotation,
       score: r.score,
       percentile: r.percentile,
+      note: r.note,
+      rating: rating(r.votes, r.sum),
+      authorRecord: rating(r.a_votes, r.a_sum, r.a_books),
+      seriesRecord: r.s_known ? rating(r.s_votes, r.s_sum, r.s_books) : null,
+      inSeries: !!r.s_known,
       closest: c.jsonList(r.closest),
       link: `${cfg.mirrors[0]}/b/${bookId(r.key)}`,
     };
   };
   const counts = db.prepare('SELECT COUNT(*) AS analysed, SUM(passed) AS passed FROM feed_scores').get();
-  const answers = db.prepare("SELECT COUNT(*) AS n, SUM(answer = 'like') AS likes FROM answers").get();
+  const answers = db.prepare("SELECT COUNT(*) AS n, SUM(kind = 'read') AS read, SUM(rescored = 0) AS old FROM answers").get();
+  const lowRated = db.prepare(`SELECT COUNT(*) AS n FROM feed_scores s JOIN rating_facts r ON r.key = s.key
+    WHERE s.passed = 1 AND s.score IS NOT NULL AND r.votes >= ${LOW_VOTES} AND r.sum < ${LOW_AVERAGE} * r.votes
+      AND s.key NOT IN (SELECT key FROM answers) AND s.key NOT IN (SELECT key FROM book_state)`).get().n;
+  const ratingsInfo = c.getMeta(db, 'ratings_info') || {};
   const hasFiles = db.prepare("SELECT 1 FROM sqlite_master WHERE name = 'feed_files'").get();
   const lastFile = hasFiles ? db.prepare('SELECT MAX(processed_at) AS t FROM feed_files').get().t : null;
   const recommended = rows.filter((r) => r.percentile <= top).map(card);
@@ -123,8 +144,12 @@ function state() {
       lastCheck: c.getMeta(db, 'daily_last_run') || null,
       analysed: counts.analysed,
       passed: counts.passed || 0,
-      answers: answers.n,
-      likes: answers.likes || 0,
+      scores: answers.n,
+      scoresRead: answers.read || 0,
+      scoresOld: answers.old || 0,
+      lowRated,
+      ratingsAt: ratingsInfo.refreshed_at || null,
+      ratingsAverage: ratingsInfo.average || FALLBACK_AVERAGE,
       sinceTraining: c.getMeta(db, 'answers_since_train') || 0,
       model: c.getMeta(db, 'model_info') || null,
     },
@@ -137,26 +162,31 @@ function state() {
 // How many books each list has: the numbers beside the names in the menu.
 function counts_(recommended) {
   if (recommended === undefined) {
-    recommended = db.prepare(`SELECT COUNT(*) AS n FROM feed_scores s WHERE s.passed = 1 AND s.score IS NOT NULL AND s.percentile <= ?
-      AND s.key NOT IN (SELECT key FROM answers) AND s.key NOT IN (SELECT key FROM book_state)`).get(topPercent()).n;
+    recommended = db.prepare(`SELECT COUNT(*) AS n FROM feed_scores s WHERE ${OPEN} AND s.percentile <= ?`).get(topPercent()).n;
   }
   const st = db.prepare(`SELECT SUM(state = 'to_send') AS toSend, SUM(state = 'reading') AS reading
     FROM book_state WHERE key NOT IN (SELECT key FROM answers)`).get();
-  const an = db.prepare("SELECT SUM(answer = 'like') AS liked, SUM(answer = 'dislike') AS disliked FROM answers").get();
-  return { home: recommended, tosend: st.toSend || 0, reading: st.reading || 0, liked: an.liked || 0, disliked: an.disliked || 0 };
+  const an = db.prepare('SELECT COUNT(*) AS n FROM answers').get();
+  return { home: recommended, tosend: st.toSend || 0, reading: st.reading || 0, scores: an.n };
 }
 
 // The books of one list: "tosend" (in the order I added them), "reading"
-// (newest first), "liked" and "disliked" (my answers, newest first).
+// (newest first), "scores" (every book I scored or was sent, newest first).
+// There is no list of books I have not seen: a book gets here only after I
+// answered it or it was sent to me.
 const LISTS = {
-  tosend: `SELECT f.key, f.authors, f.title, f.series, f.series_no, b.time, NULL AS kind FROM book_state b JOIN feed_books f ON f.key = b.key
+  tosend: `SELECT f.key, f.authors, f.title, f.series, f.series_no, b.time, NULL AS kind, NULL AS score, NULL AS rescored, NULL AS sent
+    FROM book_state b JOIN feed_books f ON f.key = b.key
     WHERE b.state = 'to_send' AND b.key NOT IN (SELECT key FROM answers) ORDER BY b.time, b.rowid`,
-  reading: `SELECT f.key, f.authors, f.title, f.series, f.series_no, b.time, NULL AS kind FROM book_state b JOIN feed_books f ON f.key = b.key
+  reading: `SELECT f.key, f.authors, f.title, f.series, f.series_no, b.time, NULL AS kind, NULL AS score, NULL AS rescored, b.time AS sent
+    FROM book_state b JOIN feed_books f ON f.key = b.key
     WHERE b.state = 'reading' AND b.key NOT IN (SELECT key FROM answers) ORDER BY b.time DESC, b.rowid DESC`,
-  liked: `SELECT f.key, f.authors, f.title, f.series, f.series_no, a.time, a.kind FROM answers a JOIN feed_books f ON f.key = a.key
-    WHERE a.answer = 'like' ORDER BY a.time DESC`,
-  disliked: `SELECT f.key, f.authors, f.title, f.series, f.series_no, a.time, a.kind FROM answers a JOIN feed_books f ON f.key = a.key
-    WHERE a.answer = 'dislike' ORDER BY a.time DESC`,
+  scores: `SELECT f.key, f.authors, f.title, f.series, f.series_no, a.time, a.kind, a.score, a.rescored, b.time AS sent
+      FROM answers a JOIN feed_books f ON f.key = a.key LEFT JOIN book_state b ON b.key = a.key AND b.state = 'reading'
+    UNION ALL
+    SELECT f.key, f.authors, f.title, f.series, f.series_no, b.time, NULL, NULL, NULL, b.time
+      FROM book_state b JOIN feed_books f ON f.key = b.key WHERE b.state = 'reading' AND b.key NOT IN (SELECT key FROM answers)
+    ORDER BY 6 DESC`,
 };
 
 function listBooks(name) {
@@ -167,6 +197,9 @@ function listBooks(name) {
       id,
       time: r.time,
       kind: r.kind,
+      score: r.score,
+      rescored: r.rescored == null ? null : !!r.rescored,
+      sent: r.sent,
       authors: c.jsonList(r.authors).join(', '),
       title: r.title,
       series: r.series,
@@ -210,27 +243,34 @@ function countAnswer() {
   return { retrain, sinceTraining: since };
 }
 
-// Stores a Like or Dislike. A first answer remembers its kind: 'read' when
-// the book was in "Reading" (I judged it after reading), otherwise 'card'.
-// Changing an answer keeps the kind. Pressing the same answer again changes
-// nothing, so a book is never counted twice towards the next retraining.
-function recordAnswer(key, answer) {
+// Stores my score, 1 (bad) to 5 (excellent). The score remembers how it was
+// given: 'read' when the book was sent to iBooks (it is or was in "Reading"),
+// otherwise 'card' (from the card only). A score can be changed at any time.
+// Pressing the same score again changes nothing, so a book is never counted
+// twice towards the next retraining; on an old answer ("not rescored") it
+// confirms the score.
+const WORD = { 1: 'dislike', 2: 'dislike', 3: 'average', 4: 'like', 5: 'like' };
+function recordScore(key, score) {
   key = String(key);
-  const old = db.prepare('SELECT answer, kind FROM answers WHERE key = ?').get(key);
-  if (old && old.answer === answer) return { retrain: false, sinceTraining: c.getMeta(db, 'answers_since_train') || 0 };
+  const old = db.prepare('SELECT score, kind, rescored FROM answers WHERE key = ?').get(key);
   const state = stateOf(key);
-  const kind = old ? old.kind : state === 'reading' ? 'read' : 'card';
-  db.prepare('INSERT INTO answers (key, answer, time, kind) VALUES (?, ?, ?, ?) ON CONFLICT (key) DO UPDATE SET answer = excluded.answer, time = excluded.time')
-    .run(key, answer, new Date().toISOString(), kind);
-  // the "reading" row stays (hidden by the answer), so a cleared answer puts the book back in "Reading"
+  const kind = state === 'reading' ? 'read' : old ? old.kind : 'card';
+  if (old && old.score === score) {
+    if (!old.rescored) db.prepare('UPDATE answers SET rescored = 1, kind = ? WHERE key = ?').run(kind, key);
+    return { retrain: false, sinceTraining: c.getMeta(db, 'answers_since_train') || 0 };
+  }
+  db.prepare(`INSERT INTO answers (key, answer, time, kind, score, rescored) VALUES (?, ?, ?, ?, ?, 1)
+    ON CONFLICT (key) DO UPDATE SET answer = excluded.answer, time = excluded.time, kind = excluded.kind, score = excluded.score, rescored = 1`)
+    .run(key, WORD[score], new Date().toISOString(), kind, score);
+  // the "reading" row stays (hidden by the score), so a cleared score puts the book back in "Reading"
   if (state === 'to_send') db.prepare('DELETE FROM book_state WHERE key = ?').run(key);
   const r = countAnswer();
-  log(`${answer} for book ${key} (${kind === 'read' ? 'after reading' : 'on a card'}${old ? ', changed' : ''})${r.retrain ? ' - retraining the model' : ''}`);
+  log(`score ${score} for book ${key} (${kind === 'read' ? 'after reading' : 'from the card'}${old ? ', was ' + old.score : ''})${r.retrain ? ' - retraining the model' : ''}`);
   return r;
 }
 
-// Clears an answer. The book goes back to where it was: to "Reading" when it
-// was judged after reading, otherwise to the recommendations.
+// Clears a score. The book goes back to where it was: to "Reading" when it
+// was scored after reading, otherwise to the recommendations.
 function clearAnswer(key) {
   key = String(key);
   const old = db.prepare('SELECT kind FROM answers WHERE key = ?').get(key);
@@ -239,7 +279,7 @@ function clearAnswer(key) {
   if (old.kind === 'read' && !stateOf(key)) {
     db.prepare("INSERT INTO book_state (key, state, time) VALUES (?, 'reading', ?)").run(key, new Date().toISOString());
   }
-  log(`answer cleared for book ${key} - back to ${old.kind === 'read' ? '"Reading"' : 'the recommendations'}`);
+  log(`score cleared for book ${key} - back to ${old.kind === 'read' ? '"Reading"' : 'the recommendations'}`);
   return true;
 }
 
@@ -383,6 +423,18 @@ app.use('/api', (req, res, next) => {
 const page = (req, res) => res.sendFile(path.join(__dirname, 'page.html'));
 app.get('/', page);
 for (const name of Object.keys(LISTS)) app.get('/' + name, page);
+// the old pages "Liked" and "Disliked" are now one page, "My scores"
+app.get(['/liked', '/disliked'], (req, res) => res.redirect('/scores'));
+
+// The model report, rebuilt after every training (model/report.py).
+app.get('/report', (req, res) => {
+  res.set('Cache-Control', 'no-store');
+  const file = path.join(cfg.reportsDir, 'model.html');
+  if (!fs.existsSync(file)) {
+    return res.status(404).send(errorPage('No model report yet', ['The report is built at the end of every training of the model. Run "npm run train" once, or give 10 scores.']));
+  }
+  res.sendFile(file);
+});
 app.get('/api/state', (req, res) => res.json(state()));
 
 app.get('/api/list/:name', (req, res) => {
@@ -392,17 +444,17 @@ app.get('/api/list/:name', (req, res) => {
   res.json({ books: listBooks(name), counts: counts_() });
 });
 
-app.post('/api/answer', (req, res) => {
-  const { key, answer } = req.body || {};
-  if (!['like', 'dislike'].includes(answer) || !knownBook(key)) {
-    return res.status(400).json({ error: 'unknown book or answer' });
+app.post('/api/score', (req, res) => {
+  const { key, score } = req.body || {};
+  if (![1, 2, 3, 4, 5].includes(score) || !knownBook(key)) {
+    return res.status(400).json({ error: 'unknown book, or the score is not a number from 1 to 5' });
   }
-  res.json({ ok: true, ...recordAnswer(key, answer) });
+  res.json({ ok: true, ...recordScore(key, score) });
 });
 
 app.post('/api/clear', (req, res) => {
   const { key } = req.body || {};
-  if (!clearAnswer(key)) return res.status(400).json({ error: 'this book has no answer' });
+  if (!clearAnswer(key)) return res.status(400).json({ error: 'this book has no score' });
   res.json({ ok: true });
 });
 

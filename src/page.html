@@ -52,14 +52,23 @@
   .near ul { margin: 2px 0 0; padding-left: 18px; }
   .row { display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; -webkit-align-items: center; align-items: center; margin-top: 8px; }
   .row button, .row .btn { margin: 8px 10px 0 0; }
-  .like, .ibooks { background: #2f6f4f; border-color: #2f6f4f; color: #fff; }
+  .ibooks { background: #2f6f4f; border-color: #2f6f4f; color: #fff; }
+  .scorebox { display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; -webkit-align-items: center; align-items: center; margin-top: 10px; }
+  .scorebox .lab { font-size: 15px; color: #6d675d; margin: 8px 10px 0 0; }
+  .scorebox button { min-width: 48px; padding: 11px 0; margin: 8px 6px 0 0; font-weight: 600; }
+  .scorebox button.on { background: #2f6f4f; border-color: #2f6f4f; color: #fff; }
+  .scorebox .clr { min-width: 0; padding: 7px 14px; min-height: 40px; font-size: 15px; font-weight: 400; margin-left: 6px; }
+  .rate { font-size: 15px; margin: 8px 0 0; }
+  .rate div { margin: 1px 0; }
+  .rate span { color: #6d675d; }
+  .chip.note { background: #2f6f4f; color: #fff; }
+  .old { color: #a2452f; }
   .row .big { font-size: 20px; font-weight: 600; padding: 15px 26px; min-height: 56px; }
   .row .small { font-size: 15px; min-height: 40px; padding: 7px 14px; }
   .prep { font-size: 14px; color: #6d675d; margin: 8px 10px 0 0; }
   .prep.ready { color: #2f6f4f; font-weight: 600; }
   .headrow { display: -webkit-flex; display: flex; -webkit-flex-wrap: wrap; flex-wrap: wrap; -webkit-align-items: center; align-items: center; -webkit-justify-content: space-between; justify-content: space-between; margin-top: 32px; }
   .headrow h2 { margin: 0 12px 4px 0; }
-  .dislike { background: none; border-color: #a2452f; color: #a2452f; }
   .row .site { margin: 8px 0 0 auto; font-size: 15px; padding: 11px 0; }
   .when { color: #6d675d; font-size: 14px; }
   .empty { color: #6d675d; padding: 18px 0; }
@@ -70,7 +79,9 @@
     a { color: #7fc8a0; }
     button, .btn { border-color: #3a372f; background: #25231f; color: #ece8df; }
     nav .btn.here { background: #34312a; }
-    .status, .hint, .author, .series span, .near, .when, .empty, .prep, nav .btn span { color: #a39c8e; }
+    .status, .hint, .author, .series span, .near, .when, .empty, .prep, nav .btn span, .rate span, .scorebox .lab { color: #a39c8e; }
+    .scorebox button.on, .chip.note { background: #4f9a74; border-color: #4f9a74; color: #fff; }
+    .old { color: #c26a52; }
     .prep.ready { color: #7fc8a0; }
     .status b { color: #ece8df; }
     .busy { color: #7fc8a0; }
@@ -80,8 +91,7 @@
     .chip { background: #34312a; }
     .chip.score { background: none; border-color: #7fc8a0; color: #7fc8a0; }
     button.more, button#showRest { color: #7fc8a0; background: none; }
-    .like, .ibooks { background: #4f9a74; border-color: #4f9a74; color: #fff; }
-    .dislike { background: none; border-color: #c26a52; color: #c26a52; }
+    .ibooks { background: #4f9a74; border-color: #4f9a74; color: #fff; }
   }
 </style>
 </head>
@@ -95,8 +105,8 @@
     <a class="btn" id="nav_home" href="/">Recommendations <span id="count_home"></span></a>
     <a class="btn" id="nav_tosend" href="/tosend">To send <span id="count_tosend"></span></a>
     <a class="btn" id="nav_reading" href="/reading">Reading <span id="count_reading"></span></a>
-    <a class="btn" id="nav_liked" href="/liked">Liked <span id="count_liked"></span></a>
-    <a class="btn" id="nav_disliked" href="/disliked">Disliked <span id="count_disliked"></span></a>
+    <a class="btn" id="nav_scores" href="/scores">My scores <span id="count_scores"></span></a>
+    <a class="btn" id="nav_report" href="/report">Model report</a>
   </nav>
 
   <div id="homeView">
@@ -108,7 +118,7 @@
       <h2>Recommended</h2>
       <button id="addAll">Add all to send list</button>
     </div>
-    <p class="hint">New books whose score is in the top <input id="top" type="number" min="0.5" max="100" step="0.5"> % of all books scored so far, best first.</p>
+    <p class="hint">New books whose predicted score is in the top <input id="top" type="number" min="0.5" max="100" step="0.5"> % of all books scored so far, best first. Give a book your own score from 1 (bad) through 3 (average) to 5 (excellent).</p>
     <div id="recommended"></div>
 
     <button id="showRest"></button>
@@ -130,8 +140,7 @@
 var LISTS = {
   tosend: { title: 'To send', make: toSendRow, empty: 'The waiting list is empty. Press "Add to send list" on the recommendations page.' },
   reading: { title: 'Reading', make: readingCard, empty: 'No books here. A book comes here when you press "Read in iBooks" on the page "To send".' },
-  liked: { title: 'Liked books', make: answerCard, empty: 'No liked books yet.' },
-  disliked: { title: 'Disliked books', make: answerCard, empty: 'No disliked books yet.' }
+  scores: { title: 'My scores', make: scoreCard, empty: 'No scores yet. Score a book on its card, or after reading on the page "Reading".' }
 };
 var view = window.location.pathname.replace(/^\/+|\/+$/g, '');
 if (!LISTS.hasOwnProperty(view)) view = 'home';
@@ -237,6 +246,26 @@ function siteLink(row, b) {
   row.appendChild(link);
 }
 
+// Five buttons, 1 to 5. The current score (if any) is filled in. With
+// "canClear" there is also a button that takes the score away.
+function scoreButtons(box, b, current, canClear) {
+  var row = el('div', 'scorebox');
+  row.appendChild(el('span', 'lab', current ? 'My score:' : 'Score it:'));
+  for (var n = 1; n <= 5; n++) button(row, String(n), n === current ? 'on' : null, '/api/score', { key: b.key, score: n }, 'save the score');
+  row.appendChild(el('span', 'lab', '1 bad · 3 average · 5 excellent'));
+  if (canClear) button(row, 'Clear score', 'clr', '/api/clear', { key: b.key }, 'clear the score');
+  box.appendChild(row);
+  return row;
+}
+
+// "rating 4.3 from 12 votes", or the words for "nobody voted yet"
+function ratingText(r, none, books) {
+  if (!r) return none;
+  var t = 'rating ' + r.avg.toFixed(1) + ' from ' + thousands(r.votes) + (r.votes === 1 ? ' vote' : ' votes');
+  if (books) t += ' on ' + r.books + (r.books === 1 ? ' earlier book' : ' earlier books');
+  return t;
+}
+
 // A link that gets the EPUB file: on the iPad Safari then offers "Open in iBooks".
 function epubLink(row, b, label, cls) {
   var a = el('a', cls, label);
@@ -277,11 +306,25 @@ function card(b) {
   }
   var chips = el('div', 'chips');
   var pct = b.percentile < 10 ? b.percentile.toFixed(1) : String(Math.round(b.percentile));
-  chips.appendChild(el('span', 'chip score', 'score ' + b.score.toFixed(2) + ' · top ' + pct + '%'));
+  chips.appendChild(el('span', 'chip score', 'predicted score ' + b.score.toFixed(2) + ' · top ' + pct + '%'));
+  if (b.note) chips.appendChild(el('span', 'chip note', b.note));
   for (i = 0; i < b.genres.length; i++) chips.appendChild(el('span', 'chip', b.genres[i]));
   chips.appendChild(el('span', 'chip', thousands(Math.round(b.words / 1000)) + ' thousand words'));
   if (b.translated) chips.appendChild(el('span', 'chip', 'translated'));
   box.appendChild(chips);
+  var rate = el('div', 'rate');
+  var line = el('div', null, 'Readers: ');
+  line.appendChild(el('span', null, ratingText(b.rating, 'no votes yet')));
+  rate.appendChild(line);
+  line = el('div', null, 'Author: ');
+  line.appendChild(el('span', null, ratingText(b.authorRecord, 'no votes yet on earlier books', true)));
+  rate.appendChild(line);
+  if (b.inSeries) {
+    line = el('div', null, 'Series: ');
+    line.appendChild(el('span', null, ratingText(b.seriesRecord, 'no votes yet on earlier books', true)));
+    rate.appendChild(line);
+  }
+  box.appendChild(rate);
   if (b.annotation) {
     var ann = el('div', 'ann short', b.annotation);
     box.appendChild(ann);
@@ -310,10 +353,9 @@ function card(b) {
   }
   var row = el('div', 'row');
   button(row, 'Add to send list', null, '/api/tosend', { key: b.key }, 'add the book to the send list');
-  button(row, 'Like', 'like', '/api/answer', { key: b.key, answer: 'like' }, 'save the answer');
-  button(row, 'Dislike', 'dislike', '/api/answer', { key: b.key, answer: 'dislike' }, 'save the answer');
   siteLink(row, b);
   box.appendChild(row);
+  scoreButtons(box, b, null, false);
   return box;
 }
 
@@ -333,26 +375,31 @@ function toSendRow(b) {
 function readingCard(b) {
   var box = listCard(b);
   box.appendChild(el('div', 'when', 'Sent to iBooks ' + when(b.time)));
+  scoreButtons(box, b, null, false);
   var row = el('div', 'row');
-  button(row, 'Like', 'like', '/api/answer', { key: b.key, answer: 'like' }, 'save the answer');
-  button(row, 'Dislike', 'dislike', '/api/answer', { key: b.key, answer: 'dislike' }, 'save the answer');
   epubLink(row, b, 'Send again', 'btn');
   siteLink(row, b);
   box.appendChild(row);
   return box;
 }
 
-// One answer on the pages "Liked" and "Disliked".
-function answerCard(b) {
-  var liked = view === 'liked';
+// One book on the page "My scores": a book I scored, or a book that was sent
+// to me and has no score yet.
+function scoreCard(b) {
   var box = listCard(b);
-  box.appendChild(el('div', 'when', (liked ? 'Liked ' : 'Disliked ') + when(b.time) + (b.kind === 'read' ? ' · after reading' : ' · on a card, not read')));
-  var row = el('div', 'row');
-  if (liked) button(row, 'Change to Dislike', 'dislike', '/api/answer', { key: b.key, answer: 'dislike' }, 'change the answer');
-  else button(row, 'Change to Like', 'like', '/api/answer', { key: b.key, answer: 'like' }, 'change the answer');
-  button(row, 'Clear answer', null, '/api/clear', { key: b.key }, 'clear the answer');
+  var info = el('div', 'when');
+  if (!b.score) {
+    info.appendChild(document.createTextNode('Sent to iBooks ' + when(b.sent) + ' · not scored yet'));
+  } else {
+    info.appendChild(document.createTextNode('Score ' + b.score + ' · given ' + when(b.time) + (b.kind === 'read' ? ' · after reading' : ' · from the card only, not read')));
+    if (!b.rescored) {
+      info.appendChild(document.createTextNode(' · '));
+      info.appendChild(el('span', 'old', 'not rescored (was ' + (b.score >= 4 ? 'Like' : 'Dislike') + ')'));
+    }
+  }
+  box.appendChild(info);
+  var row = scoreButtons(box, b, b.score || null, !!b.score);
   siteLink(row, b);
-  box.appendChild(row);
   return box;
 }
 
@@ -378,15 +425,27 @@ function render(s) {
   var st = s.status;
   var m = st.model;
   var i;
-  var quality = m
-    ? 'model quality <b>AUC ' + m.auc.toFixed(3) + '</b>, <b>' + (100 * m.top5).toFixed(0) + '%</b> of liked books in the top 5% (trained ' + when(m.trained_at) + ')'
-    : 'no trained model yet';
+  var quality = 'no trained model yet';
+  if (m && m.kind_name) {
+    quality = 'model: ' + m.kind_name + ', ranking quality <b>' + m.auc.toFixed(2) + '</b> (<b>' + m.auc_hidden.toFixed(2) + '</b> for books without votes) · ';
+    if (m.spearman === null || m.spearman === undefined) {
+      quality += 'agreement with my scores: shown from ' + m.min_scores + ' scores (' + m.scored + ' in the last training)';
+    } else {
+      quality += 'agreement with my scores <b>' + m.spearman.toFixed(2) + '</b> (Spearman, unseen books) · my average score for its top 10 <b>' + m.top10_avg.toFixed(1) + '</b>';
+    }
+    quality += ' · trained ' + when(m.trained_at);
+  } else if (m) {
+    quality = 'the model is from the earlier version; it is replaced at the next training';
+  }
   $('status').innerHTML = 'Last download <b>' + when(st.lastDownload) + '</b> · last check ' + when(st.lastCheck && st.lastCheck.time) + ' · ' +
-    '<b>' + st.analysed + '</b> books analysed · <b>' + st.passed + '</b> passed the filters · <b>' + st.answers + '</b> answers given (' + st.likes + ' likes) · ' + quality;
+    'ratings from ' + when(st.ratingsAt) + ' · ' +
+    '<b>' + st.analysed + '</b> books analysed · <b>' + st.passed + '</b> passed the filters · ' +
+    (st.lowRated ? '<b>' + st.lowRated + '</b> hidden for a low reader rating · ' : '') +
+    '<b>' + st.scores + '</b> scores given (' + st.scoresRead + ' after reading' + (st.scoresOld ? ', ' + st.scoresOld + ' not rescored' : '') + ') · ' + quality;
 
   var busyText = s.busy
     ? s.busy + ' ...' + (s.waiting.length ? ' Next: ' + s.waiting.join(', ').toLowerCase() + '.' : '')
-    : 'The model retrains after every ' + s.retrainEvery + ' answers; ' + (s.retrainEvery - st.sinceTraining) + ' to go.';
+    : 'The model retrains after every ' + s.retrainEvery + ' new or changed scores; ' + (s.retrainEvery - st.sinceTraining) + ' to go.';
   clear($('busy'));
   $('busy').appendChild(document.createTextNode(busyText));
   $('check').disabled = !!s.busy && s.busy.indexOf('Checking') === 0;
@@ -415,9 +474,8 @@ function render(s) {
 
 var STATUS = {
   tosend: 'Waiting books, in the order you added them. "Read in iBooks" gets the EPUB file (on the iPad choose "Open in iBooks") and moves the book to "Reading". Come back to this page for the next book.',
-  reading: 'Books sent to iBooks, newest first. Give your answer after reading: a Dislike here counts more than a Dislike on a card you never read.',
-  liked: 'Your Likes, newest first. You can change or clear any answer; a cleared book goes back to where it was.',
-  disliked: 'Your Dislikes, newest first. You can change or clear any answer; a cleared book goes back to where it was.'
+  reading: 'Books sent to iBooks, newest first. Give your score after reading: a score given here counts more (weight 5) than a score given from the card only (weight 2).',
+  scores: 'Every book you scored or were sent, newest first. Press a number to give or change a score at any time. Old Likes start as 4 and old Dislikes as 2, marked "not rescored" until you press a number. "Clear score" puts a book back where it was.'
 };
 
 function load() {
