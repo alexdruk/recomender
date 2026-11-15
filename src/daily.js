@@ -8,9 +8,12 @@
 //      look up the votes, the author record and the series record of every book
 //   3. filter every feed book that has no score from me yet (settings: config.json "filters")
 //   4. fingerprint the books that passed: stylometry here, embeddings in Python
-//   5. score the new books with the saved model, and score again every unanswered
+//   5. score the new books with the saved cheap model, and score again every unanswered
 //      book of the last 60 days, because its ratings may have changed ("feed_scores")
-//   6. cleanup.js: delete parsed zips, feed texts older than 14 days that are in
+//   6. the reading model (a local language model, model/reader.py) reads the best 30
+//      unread books of the day; their final score uses its ratings. The other books
+//      keep the cheap score and are marked "not read by the model"
+//   7. cleanup.js: delete parsed zips, feed texts older than 14 days that are in
 //      no list, and cached EPUB files older than 30 days
 //
 // Safe to run again at any time: nothing is downloaded or measured twice.
@@ -53,9 +56,14 @@ function ensureTables(db) {
   }
   // votes: the number of votes the book had when it was last scored; note: "now rated";
   // nf_prob: the chance that the text is non-fiction (the text check in model/fiction_check.py)
-  for (const [name, type] of [['votes', 'INTEGER'], ['note', 'TEXT'], ['nf_prob', 'REAL']]) {
+  // cheap_score: the score without the reading model; reasons: the qualities that raised and lowered the final score
+  for (const [name, type] of [['votes', 'INTEGER'], ['note', 'TEXT'], ['nf_prob', 'REAL'], ['cheap_score', 'REAL'], ['reasons', 'TEXT']]) {
     if (!db.prepare("SELECT 1 FROM pragma_table_info('feed_scores') WHERE name = ?").get(name)) db.exec(`ALTER TABLE feed_scores ADD COLUMN ${name} ${type}`);
   }
+  // what the reading model (model/reader.py) said about a book it has read
+  db.exec(`CREATE TABLE IF NOT EXISTS readings (
+    key TEXT PRIMARY KEY, kind TEXT, model TEXT, version INTEGER, parts INTEGER, words INTEGER,
+    ratings TEXT, person_first REAL, tones TEXT, themes TEXT, summary TEXT, seconds REAL, read_at TEXT)`);
   ratings.ensureFactsTable(db);
 }
 
@@ -192,7 +200,7 @@ async function main() {
     process.exitCode = 1;
     return; // no cleaning: the texts may still be needed
   }
-  // 6. cleaning: parsed zips, old feed texts that are in no list, old EPUB files
+  // 7. cleaning: parsed zips, old feed texts that are in no list, old EPUB files
   const db2 = c.openDb(cfg);
   db2.pragma('busy_timeout = 60000');
   try {

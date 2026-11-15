@@ -101,7 +101,7 @@ def quality_chart(d):
     """Ranking quality of each group of factors alone and together, with and without the book's own rating."""
     kind = d["info"]["kind"]
     rows = [(d["group_names"][g], g) for g in ("text", "style", "genre", "ratings", "record")]
-    rows += [("the book file alone (text + style + genre)", "file"), ("all five groups together", "all")]
+    rows += [("the book file alone (text + style + genre)", "file"), ("all five groups together", "cheap")]
     left, right, top, bh, gap, rowh = 250, 60, 26, 13, 2, 46
     x0, x1 = left, W - right
     sx = lambda v: x0 + (max(v, 0.5) - 0.5) / 0.5 * (x1 - x0)  # noqa: E731
@@ -113,7 +113,7 @@ def quality_chart(d):
     for i, (name, key) in enumerate(rows):
         q = d["quality"][f"{kind}:{key}"]
         y = top + i * rowh + 6
-        out.append(f'<text x="{left - 10}" y="{y + bh + 5}" text-anchor="end"{" font-weight=\"600\"" if key == "all" else ""}>{esc(name)}</text>')
+        out.append(f'<text x="{left - 10}" y="{y + bh + 5}" text-anchor="end"{" font-weight=\"600\"" if key == "cheap" else ""}>{esc(name)}</text>')
         for j, (cond, cls, what) in enumerate((("seen", "c1", "rated books"), ("hidden", "c2", "books without votes"))):
             v = q[cond]["auc"]
             yy = y + j * (bh + gap)
@@ -236,12 +236,107 @@ def scatter_chart(d):
         '<table><tr><th>Author</th><th>Title</th><th class="n">My score</th><th class="n">Predicted</th><th>Given</th></tr>' + rows + "</table>"
 
 
+
+def reading_section(d):
+    """Did the reading model help? The full model against the cheap one on the books it has read, with the shuffled control."""
+    i = d["info"]
+    r = i.get("reading")
+    prog = d.get("reading_progress") or {}
+    run = ""
+    if prog.get("total"):
+        state = {"running": "is running", "finished": "is finished", "stopped": "was stopped"}.get(prog.get("state"), "")
+        run = f' The long run {state}: {prog.get("done", 0)} of {prog["total"]} books read.'
+    if not r:
+        return (f'<div class="card"><p>The reading model ({esc(str(i.get("reader_model")))}) has read {i.get("read_books", 0)} of the training books so far. '
+                f"That is too few to train with its ratings, so every book keeps the cheap score.{run}</p></div>")
+    rows, verdicts = [], []
+    for cond, what in (("seen", "Rated books"), ("hidden", "Books without votes")):
+        c = r[cond]
+        rows.append(f'<tr><td>{what}</td><td class="n">{100 * c["cheap"]:.1f}%</td><td class="n"><b>{100 * c["full"]:.1f}%</b></td>'
+                    f'<td class="n">{100 * c["gain"]:+.1f} ± {100 * c["gain_se"]:.1f}</td><td class="n">{c["wins"]} of {c["folds"]}</td>'
+                    f'<td class="n">{100 * c["noise"]:.1f}% ({100 * c["noise_gain"]:+.1f})</td><td class="n">{100 * c["alone"]:.1f}%</td></tr>')
+        verdicts.append(c["beats_noise"])
+    if all(verdicts):
+        say = "Yes: the ratings of the reading model improve the ranking by more than chance can explain, for rated books and for books without votes."
+    elif any(verdicts):
+        say = "Partly: the improvement is bigger than chance in one of the two cases only."
+    else:
+        say = "No: the change is within what chance alone gives. The ratings do not improve the ranking so far."
+    left, right, top, bh, rowh = 250, 60, 26, 13, 34
+    x0, x1 = left, W - right
+    sx = lambda v: x0 + (max(v, 0.5) - 0.5) / 0.5 * (x1 - x0)  # noqa: E731
+    out = []
+    for v in (0.5, 0.6, 0.7, 0.8, 0.9, 1.0):
+        out.append(f'<line class="{"axis" if v == 0.5 else "grid"}" x1="{sx(v):.1f}" y1="{top - 6}" x2="{sx(v):.1f}" y2="{top + rowh * 4}"/>')
+        out.append(f'<text class="m" x="{sx(v):.1f}" y="14" text-anchor="middle">{int(v * 100)}%{" (chance)" if v == 0.5 else ""}</text>')
+    bars = [("cheap model", "cheap", "c0"), ("with the reading model", "full", "c1"), ("with shuffled ratings (control)", "noise", "c0"),
+            ("the reading model alone", "alone", "c2")]
+    for k, (name, key, cls) in enumerate(bars):
+        v = r["hidden"][key]
+        y = top + k * rowh + 6
+        out.append(f'<text x="{left - 10}" y="{y + bh - 1}" text-anchor="end"{" font-weight=\"600\"" if key == "full" else ""}>{esc(name)}</text>')
+        out.append(bar(x0, y, sx(v) - x0, bh, cls, f"{name}, books without votes: {100 * v:.1f}%"))
+        out.append(f'<text x="{sx(v) + 6:.1f}" y="{y + bh - 2}">{100 * v:.1f}%</text>')
+    return (f'<div class="card"><p><b>{esc(say)}</b></p>'
+            f'<p class="muted">Measured on the {r["books_read"]} training books that the reading model ({esc(i["reader_model"])}) has read '
+            f'({i["read_library"]} library, {i["read_background"]} background, {i["read_scored"]} scored), in the same author-grouped test.{run}</p>'
+            + svg(top + rowh * 4 + 6, out, "Ranking quality with and without the reading model, books without votes")
+            + '<p class="muted">The chart is for books without votes (a new book). The table has both cases.</p>'
+            '<table><tr><th></th><th class="n">Cheap model</th><th class="n">With the reading model</th><th class="n">Change, points</th>'
+            '<th class="n">Better in test parts</th><th class="n">Shuffled ratings</th><th class="n">Reading model alone</th></tr>' + "".join(rows) + "</table>"
+            '<p class="muted">"Shuffled ratings" is the control: the same ratings handed to other books, so they carry no information. '
+            "Whatever it changes is noise. ± is two-sided room for chance, from the spread between the test parts. The reading model counts as "
+            "helping only when its gain minus twice that room is still above zero and above the control. "
+            "A background book that the reading model has not read borrows the ratings of a random background book that it has read, "
+            "so \"was read\" is never a hint by itself.</p></div>")
+
+
+def stability_section(d):
+    st = d.get("stability")
+    if not st:
+        return ""
+    rows = "".join(f'<tr><td>{esc(r["name"])}</td><td class="n">{"—" if r["r"] != r["r"] else f"{r["r"]:.2f}"}</td><td class="n">{r["diff"]:.2f}</td>'
+                   f'<td class="n">{r["mean"]:.2f}</td><td class="n">{r["spread"]:.2f}</td></tr>' for r in st["rows"])
+    return (f'<h2>Does the reading model agree with itself?</h2><div class="card"><p class="muted">{st["books"]} books were read twice by {esc(st["model"])}: '
+            "the same 25,000 words, the second time cut into parts at other places. Agreement 1.00 means the two readings rank the books the same way; "
+            "the average difference is in points of the 1 to 5 scale (for the narrative voice: in shares from 0 to 1).</p>"
+            '<table><tr><th>Quality</th><th class="n">Agreement</th><th class="n">Average difference</th><th class="n">Average rating</th>'
+            f'<th class="n">Spread between books</th></tr>{rows}</table></div>')
+
+
+def portrait_chart(d):
+    """My library against the background, quality by quality: the same comparison as reports/portrait.md."""
+    p = d.get("portrait")
+    if not p or not p.get("ready"):
+        return '<p class="muted">The portrait appears when the reading model has read at least 20 library books and 20 background books.</p>'
+    rows = sorted(p["qualities"], key=lambda q: -q["diff"])
+    biggest = max(max(abs(q["diff"]) for q in rows), 0.25)
+    rowh, bh, labw, numw = 26, 14, 210, 150
+    mid = labw + (W - labw - numw) / 2
+    half = (W - labw - numw) / 2 - 8
+    out = [f'<line class="axis" x1="{mid:.1f}" y1="0" x2="{mid:.1f}" y2="{len(rows) * rowh + 4}"/>']
+    for k, q in enumerate(rows):
+        y = k * rowh + 5
+        w = abs(q["diff"]) / biggest * half
+        tip = f'{q["name"]}: my library {q["a"]:.2f}, background {q["b"]:.2f}'
+        out.append(f'<text x="{labw - 10}" y="{y + bh - 2}" text-anchor="end">{esc(q["name"])}</text>')
+        out.append(bar(mid, y, w, bh, "c1", tip) if q["diff"] >= 0 else bar_left(mid, y, w, bh, "c2", tip))
+        out.append(f'<text class="m" x="{W - numw + 6}" y="{y + bh - 2}">{q["a"]:.2f} / {q["b"]:.2f} ({q["diff"]:+.2f})</text>')
+    themes = sorted([t for t in p["themes"] if t["lib"] >= max(5, 0.03 * p["library"]) and t["ratio"] > 1.25], key=lambda t: -t["ratio"])[:8]
+    tline = ("<p>Themes my library has more often: " + ", ".join(f'{esc(t["name"])} ({100 * t["lib_share"]:.0f}% against {100 * t["bg_share"]:.0f}%)' for t in themes) + ".</p>") if themes else ""
+    legend = ('<div class="legend"><span><i class="c1"></i>higher in my library</span><span><i class="c2"></i>lower in my library</span>'
+              "<span>numbers: my library / background (difference), on the 1 to 5 scale</span></div>")
+    return (legend + svg(len(rows) * rowh + 8, out, "My library against the background, by quality") + tline
+            + f'<p class="muted">{p["library"]} library books against {p["background"]} new books picked at random, as rated by the reading model. '
+            'The full text is in reports/portrait.md.</p>')
+
+
 # ---------------------------------------------------------------- the page
 
 
 def sentences(d):
     i, q = d["info"], d["quality"]
-    best = f"{i['kind']}:all"
+    best = f"{i['kind']}:cheap"
     out = [
         f"It can sort new books so that books like the ones in my library come first: put one book I like and one ordinary book side by side, "
         f"and it picks the right one about {100 * q[best]['seen']['auc']:.0f} times in 100 when the book has reader votes and "
@@ -282,9 +377,14 @@ def build(d):
     ]
     groups = d["groups"]
     used = []
-    for g in ("text", "style", "genre", "ratings", "record"):
-        names = groups[g]
-        if g == "text":
+    for g in ("text", "style", "genre", "ratings", "record", "reading"):
+        names = groups.get(g)
+        if not names:
+            continue
+        if g == "reading":
+            body = (f"what the local language model {i.get('reader_model')} says after reading the opening: " + "; ".join(n.split(": ", 1)[-1] for n in names)
+                    + ". Used only for the books it has read.")
+        elif g == "text":
             body = f"{len(names)} numbers: the meaning of the whole text ({len(names) // 2} directions) and of the opening, the first 25,000 words ({len(names) // 2} directions), from the embedding model bge-m3."
         else:
             body = "; ".join(n.split(": ", 1)[-1] if g in ("style", "genre") else n for n in names) + "."
@@ -293,6 +393,7 @@ def build(d):
         "the year the book was written or added",
         "the text of reader comments and reviews, and how many there are",
         "the annotation and the cover",
+        "the theme tags and the summary written by the reading model (they are shown on the card only)",
         "the name of the author as such (only the marks of the author's earlier books)",
         "the marks of single readers who like the same books as I do",
         "the publisher, the translator's name, the file size",
@@ -337,10 +438,17 @@ Books that wait in "To send" or "Reading" without a score are left out.</p>
 <div class="card"><ul>{"".join(f"<li>{esc(u)}</li>" for u in unused)}</ul></div>
 
 <h2>Ranking quality of each group of factors</h2>
-<p class="muted">Each group alone, then together. Author-grouped test, {i['folds']} parts, repeated {i['repeats']} times; ± is the spread between the test parts. Bars start at 50%, which is guessing.</p>
+<p class="muted">The five groups that every book has, each alone, then together (the cheap model). The reading model has its own part below. Author-grouped test, {i['folds']} parts, repeated {i['repeats']} times; ± is the spread between the test parts. Bars start at 50%, which is guessing.</p>
 <div class="card">{quality_chart(d)}</div>
 <p class="muted">Two kinds of model were tried on all factors:</p>
 <div class="card"><table><tr><th>Model</th><th class="n">Rated books</th><th class="n">Books without votes</th></tr>{kinds}</table></div>
+
+<h2>Does the reading model improve the ranking?</h2>
+{reading_section(d)}
+{stability_section(d)}
+
+<h2>Portrait of my taste: my library against the background</h2>
+<div class="card">{portrait_chart(d)}</div>
 
 <h2>Model scores for four kinds of books</h2>
 <div class="card">{distribution_chart(d)}</div>

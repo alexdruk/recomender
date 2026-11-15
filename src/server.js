@@ -89,10 +89,12 @@ function state() {
   const map = JSON.parse(fs.readFileSync(cfg.genreMapPath, 'utf8'));
   const since = new Date(Date.now() - cfg.restDays * 86400000).toISOString();
   const rows = db.prepare(`
-    SELECT s.key, s.score, s.percentile, s.closest, s.series_note, s.added_at, s.note,
+    SELECT s.key, s.score, s.percentile, s.closest, s.series_note, s.added_at, s.note, s.cheap_score, s.reasons,
            f.authors, f.title, f.series, f.series_no, f.genres, f.words, f.annotation, f.is_translation,
-           r.votes, r.sum, r.a_known, r.a_books, r.a_votes, r.a_sum, r.s_known, r.s_books, r.s_votes, r.s_sum
+           r.votes, r.sum, r.a_known, r.a_books, r.a_votes, r.a_sum, r.s_known, r.s_books, r.s_votes, r.s_sum,
+           g.summary AS read_summary, g.themes AS read_themes
     FROM feed_scores s JOIN feed_books f ON f.key = s.key LEFT JOIN rating_facts r ON r.key = s.key
+      LEFT JOIN readings g ON g.key = s.key
     WHERE ${OPEN}
     ORDER BY s.score DESC`).all();
   // "rating 4.3 from 12 votes": the plain average; null when nobody voted
@@ -120,6 +122,10 @@ function state() {
       seriesRecord: r.s_known ? rating(r.s_votes, r.s_sum, r.s_books) : null,
       inSeries: !!r.s_known,
       closest: c.jsonList(r.closest),
+      // the reading model: null when it has not read the book (the book keeps the cheap score)
+      reading: r.read_summary
+        ? { summary: r.read_summary, themes: c.jsonList(r.read_themes), reasons: r.reasons ? JSON.parse(r.reasons) : null, cheapScore: r.cheap_score }
+        : null,
       link: `${cfg.mirrors[0]}/b/${bookId(r.key)}`,
     };
   };
@@ -152,11 +158,29 @@ function state() {
       ratingsAverage: ratingsInfo.average || FALLBACK_AVERAGE,
       sinceTraining: c.getMeta(db, 'answers_since_train') || 0,
       model: c.getMeta(db, 'model_info') || null,
+      reader: readerStatus(),
     },
     gaps: c.getMeta(db, 'feed_gaps') || [],
     busy: running ? JOBS[running].what : null,
     waiting: queue.map((n) => JOBS[n].what),
   };
+}
+
+// The reading model: how far the long run is, and whether a reading job is running now.
+function readerStatus() {
+  const p = c.getMeta(db, 'reading_progress');
+  const read = db.prepare('SELECT COUNT(*) AS n FROM readings').get().n;
+  let running = false;
+  try {
+    process.kill(JSON.parse(fs.readFileSync(path.join(cfg.dataDir, 'reader.lock'), 'utf8')).pid, 0);
+    running = true;
+  } catch (e) {
+    running = false;
+  }
+  if (!p) return { read, running, longRun: null };
+  // a run that says "running" but whose program is gone was interrupted
+  const state = p.state === 'running' && !running ? 'interrupted' : p.state;
+  return { read, running, longRun: { state, done: p.done || 0, total: p.total || 0, failed: p.failed || 0, eta: p.eta || null, finishBy: p.finish_by || null, model: p.model || null } };
 }
 
 // How many books each list has: the numbers beside the names in the menu.

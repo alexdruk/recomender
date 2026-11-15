@@ -62,6 +62,14 @@
   .rate div { margin: 1px 0; }
   .rate span { color: #6d675d; }
   .chip.note { background: #2f6f4f; color: #fff; }
+  .chip.unread { background: none; border: 1px dashed #a39c8e; color: #6d675d; }
+  .chip.theme { background: none; border: 1px solid #e2dccf; }
+  .reading { margin: 10px 0 0; padding: 10px 12px; border-left: 3px solid #2f6f4f; background: #f6f4ef; border-radius: 0 8px 8px 0; font-size: 16px; }
+  .reading .lab { color: #6d675d; font-size: 14px; }
+  .reading .why { font-size: 15px; margin: 6px 0 0; }
+  .reading .why span { color: #6d675d; }
+  .reading .up { color: #2f6f4f; font-weight: 600; }
+  .reading .down { color: #a2452f; font-weight: 600; }
   .old { color: #a2452f; }
   .row .big { font-size: 20px; font-weight: 600; padding: 15px 26px; min-height: 56px; }
   .row .small { font-size: 15px; min-height: 40px; padding: 7px 14px; }
@@ -89,6 +97,12 @@
     .hint input { border-color: #3a372f; background: #25231f; color: #ece8df; }
     .card { background: #25231f; border-color: #3a372f; }
     .chip { background: #34312a; }
+    .chip.unread { background: none; border-color: #6d675d; color: #a39c8e; }
+    .chip.theme { background: none; border-color: #3a372f; }
+    .reading { background: #1b1a17; border-left-color: #4f9a74; }
+    .reading .lab, .reading .why span { color: #a39c8e; }
+    .reading .up { color: #7fc8a0; }
+    .reading .down { color: #c26a52; }
     .chip.score { background: none; border-color: #7fc8a0; color: #7fc8a0; }
     button.more, button#showRest { color: #7fc8a0; background: none; }
     .ibooks { background: #4f9a74; border-color: #4f9a74; color: #fff; }
@@ -112,13 +126,14 @@
   <div id="homeView">
     <p class="status" id="status">Loading ...</p>
     <p class="busy" id="busy"></p>
+    <p class="status" id="reader" style="margin-top: 2px"></p>
     <div id="warnings"></div>
 
     <div class="headrow">
       <h2>Recommended</h2>
       <button id="addAll">Add all to send list</button>
     </div>
-    <p class="hint">New books whose predicted score is in the top <input id="top" type="number" min="0.5" max="100" step="0.5"> % of all books scored so far, best first. Give a book your own score from 1 (bad) through 3 (average) to 5 (excellent).</p>
+    <p class="hint">New books whose predicted score is in the top <input id="top" type="number" min="0.5" max="100" step="0.5"> % of all books scored so far, best first. A local reading model reads the best 30 new books a day; the others keep the cheaper score and are marked "not read by the model". Give a book your own score from 1 (bad) through 3 (average) to 5 (excellent).</p>
     <div id="recommended"></div>
 
     <button id="showRest"></button>
@@ -308,6 +323,7 @@ function card(b) {
   var pct = b.percentile < 10 ? b.percentile.toFixed(1) : String(Math.round(b.percentile));
   chips.appendChild(el('span', 'chip score', 'predicted score ' + b.score.toFixed(2) + ' · top ' + pct + '%'));
   if (b.note) chips.appendChild(el('span', 'chip note', b.note));
+  if (!b.reading) chips.appendChild(el('span', 'chip unread', 'not read by the model'));
   for (i = 0; i < b.genres.length; i++) chips.appendChild(el('span', 'chip', b.genres[i]));
   chips.appendChild(el('span', 'chip', thousands(Math.round(b.words / 1000)) + ' thousand words'));
   if (b.translated) chips.appendChild(el('span', 'chip', 'translated'));
@@ -325,6 +341,7 @@ function card(b) {
     rate.appendChild(line);
   }
   box.appendChild(rate);
+  if (b.reading) box.appendChild(readingBox(b.reading));
   if (b.annotation) {
     var ann = el('div', 'ann short', b.annotation);
     box.appendChild(ann);
@@ -356,6 +373,45 @@ function card(b) {
   siteLink(row, b);
   box.appendChild(row);
   scoreButtons(box, b, null, false);
+  return box;
+}
+
+// "humour and irony 4.2 (+0.12)": one quality and how much it moved the score
+function reasonText(r) {
+  var value = r.scale === 'share' ? Math.round(r.value * 100) + '%' : r.value.toFixed(1);
+  return r.name + ' ' + value + ' (' + (r.change > 0 ? '+' : '−') + Math.abs(r.change).toFixed(2) + ')';
+}
+
+function reasonLine(box, label, cls, list) {
+  if (!list || !list.length) return;
+  var names = [];
+  for (var i = 0; i < list.length; i++) names.push(reasonText(list[i]));
+  var line = el('div', 'why');
+  line.appendChild(el('b', cls, label));
+  line.appendChild(el('span', null, ' ' + names.join(' · ')));
+  box.appendChild(line);
+}
+
+// What the reading model says about the opening of the book: a two-sentence
+// summary, the themes, and the qualities that raised and lowered the score most.
+function readingBox(r) {
+  var box = el('div', 'reading');
+  box.appendChild(el('div', 'lab', 'The reading model read the opening:'));
+  box.appendChild(el('div', null, r.summary));
+  if (r.themes.length) {
+    var chips = el('div', 'chips');
+    for (var i = 0; i < r.themes.length; i++) chips.appendChild(el('span', 'chip theme', r.themes[i]));
+    box.appendChild(chips);
+  }
+  if (r.reasons) {
+    reasonLine(box, 'Raised the score:', 'up', r.reasons.up);
+    reasonLine(box, 'Lowered the score:', 'down', r.reasons.down);
+    if (r.cheapScore !== null && r.cheapScore !== undefined) {
+      box.appendChild(el('div', 'why lab', 'Score before reading: ' + r.cheapScore.toFixed(2) + '. Each number is the rating from 1 to 5 and, in brackets, how much it moved the score.'));
+    }
+  } else {
+    box.appendChild(el('div', 'why lab', 'Its ratings are not in the score yet (they are used after the next training).'));
+  }
   return box;
 }
 
@@ -449,6 +505,26 @@ function render(s) {
   clear($('busy'));
   $('busy').appendChild(document.createTextNode(busyText));
   $('check').disabled = !!s.busy && s.busy.indexOf('Checking') === 0;
+
+  // the reading model: how many books it has read, and the progress of the long run
+  var rd = st.reader;
+  var readerText = '';
+  if (rd) {
+    readerText = 'Reading model: ' + rd.read + ' books read.';
+    var lr = rd.longRun;
+    if (lr && lr.state === 'running') {
+      readerText = 'Reading model, long run: ' + lr.done + ' of ' + lr.total + ' books read (' + Math.round(100 * lr.done / (lr.total || 1)) + '%)' +
+        (lr.eta ? ', expected to finish ' + when(lr.eta) : '') + (lr.failed ? ', ' + lr.failed + ' failed' : '') + '.';
+    } else if (lr && lr.state === 'finished') {
+      readerText = 'Reading model: long run finished, ' + lr.done + ' of ' + lr.total + ' books read. ' + rd.read + ' books read in all.';
+    } else if (lr) {
+      readerText = 'Reading model: the long run stopped at ' + lr.done + ' of ' + lr.total + ' books. Start it again with "npm run read-all"; it goes on where it stopped.';
+    } else if (rd.running) {
+      readerText = 'Reading model: reading the best books of the day now (' + rd.read + ' books read so far).';
+    }
+  }
+  clear($('reader'));
+  $('reader').appendChild(document.createTextNode(readerText));
 
   var warnings = [];
   if (st.lastCheck && st.lastCheck.error) warnings.push('The last check could not download new files: ' + st.lastCheck.error.split('\n')[0]);

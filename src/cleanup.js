@@ -52,6 +52,7 @@ function oldFeedTexts(db, cfg, now) {
       AND s.key NOT IN (SELECT key FROM answers)
       AND s.key NOT IN (SELECT key FROM book_state)
       AND NOT (s.passed = 1 AND s.score IS NOT NULL AND s.percentile <= ?)`).all(before, topPercent);
+  const longRun = ['running'].includes((c.getMeta(db, 'reading_progress') || {}).state);
   const out = [];
   for (const r of rows) {
     const file = path.join(cfg.feedTextDir, r.key + '.txt');
@@ -59,6 +60,8 @@ function oldFeedTexts(db, cfg, now) {
     if (r.passed) {
       const vectors = ['emb', 'emb-open'].every((d) => fs.existsSync(path.join(cfg.dataDir, d, 'feed', r.key + '.npy')));
       if (!vectors) continue;
+      // while the long run of the reading model is going, it may still need this text
+      if (longRun) continue;
     }
     out.push(file);
   }
