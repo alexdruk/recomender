@@ -311,12 +311,50 @@ def rate_part(model, text, part, total):
         raw, r = chat(model, msgs, SCHEMA, seed=SEED + attempt)
         tokens_in = r.get("prompt_eval_count") or 0
         if tokens_in >= NUM_CTX - 8:
-            raise ReaderError(f"the part does not fit the context ({tokens_in} tokens): make reader.contextTokens bigger or reader.partWords smaller")
+            raise TooLong(f"the passage does not fit the context ({tokens_in} tokens)")
         try:
             return check(raw), {"tokens_in": tokens_in, "tokens_out": r.get("eval_count") or 0, "retries": attempt}
         except ValueError as e:
             problem = str(e)
     raise ReaderError(f"no valid JSON after {TRIES} tries: {problem}")
+
+
+class TooLong(ReaderError):
+    """The passage is longer than the memory (context) of the model."""
+
+
+def halves(text):
+    """A passage cut in two near its middle: at a paragraph end if there is one nearby, else at a space."""
+    mid = len(text) // 2
+    for mark in ("\n", " "):
+        left, right = text.rfind(mark, 0, mid), text.find(mark, mid)
+        spots = [x for x in (left, right) if x != -1 and len(text) // 4 <= x <= 3 * len(text) // 4]
+        if spots:
+            cut = min(spots, key=lambda x: abs(x - mid)) + 1
+            return text[:cut], text[cut:]
+    return text[:mid], text[mid:]
+
+
+def rate_passage(model, text, part, total, log=None, depth=0):
+    """Like rate_part, but a passage that does not fit the memory of the model is cut in two halves, each half
+    is rated on its own (and cut again if needed, up to 4 times), and the two answers are joined into one:
+    ratings averaged by the number of words, themes and summaries put together."""
+    try:
+        return rate_part(model, text, part, total)
+    except TooLong as e:
+        if depth >= 4 or len(text) < 2000:
+            raise ReaderError(f"{e}, even after cutting it into {2 ** depth} pieces")
+        a, b = halves(text)
+        if log:
+            log(f"    part {part}/{total} is too long for the model ({e}): reading it as two halves of {len(a)} and {len(b)} characters")
+        (ra, fa), (rb, fb) = rate_passage(model, a, part, total, log, depth + 1), rate_passage(model, b, part, total, log, depth + 1)
+        wa, wb = max(1, len(WORD.findall(a))), max(1, len(WORD.findall(b)))
+        themes = list(dict.fromkeys([t for pair in zip(ra["themes"], rb["themes"]) for t in pair] + ra["themes"] + rb["themes"]))[:5]
+        res = {"summary": (ra["summary"] + " " + rb["summary"])[:600],
+               "ratings": {q: round((wa * ra["ratings"][q] + wb * rb["ratings"][q]) / (wa + wb), 2) for q in Q_IDS},
+               "person": ra["person"] if ra["person"] == rb["person"] else "mixed",
+               "tone": ra["tone"] if wa >= wb else rb["tone"], "themes": themes}
+        return res, {"tokens_in": fa["tokens_in"] + fb["tokens_in"], "tokens_out": fa["tokens_out"] + fb["tokens_out"], "retries": fa["retries"] + fb["retries"]}
 
 
 def two_sentences(model, summaries):
@@ -375,7 +413,7 @@ def head(part):
         n += 1
         if n >= READ_WORDS:
             end = part.find("\n", m.end())
-            return part if end == -1 else part[:m.end()] if end - m.end() > 4000 else part[:end + 1]
+            return part[:m.end()] if end == -1 or end - m.end() > 4000 else part[:end + 1]  # no paragraph end nearby: cut at the word
     return part
 
 
@@ -449,7 +487,7 @@ def read_parts(db, key, text, run, model, shift=0, log=None):
         if i in have:
             continue
         t0 = time.time()
-        res, facts = rate_part(model, part, i, len(parts))
+        res, facts = rate_passage(model, part, i, len(parts), log)
         db.execute("""INSERT OR REPLACE INTO reading_parts (key, run, part, parts, words, model, version, result, seconds, tokens_in, tokens_out, retries, read_at)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)""",
                    (key, run, i, len(parts), words, model, VERSION, json.dumps(res, ensure_ascii=False), time.time() - t0,

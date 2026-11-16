@@ -708,27 +708,82 @@ def predict(saved, raw, keys, which, blocks):
     return np.where(count > 0, total / np.maximum(count, 1), pred)
 
 
-def reasons(saved, raw, was_read):
-    """For every read book: the three qualities that raised its score most and the three that lowered it most.
-    The change is measured against a book that the reading model finds average in that quality."""
-    X = saved["prep"].transform(raw, None, ALL_BLOCKS)
-    base = saved["full"].predict(X)
+REASON_ORDERS = 48   # random orders per book and model for the contributions
+REASON_MIN = 0.01    # a contribution smaller than this is not called a reason
+
+
+def contributions(prep, model, raw, rows, keys):
+    """The contribution of every reading factor to the score of the books "rows" (Shapley values, sampled).
+
+    The question for one book: how does its score differ from the score it would have with the reading
+    ratings of an ordinary new book (everything else about it unchanged), and how much of that difference
+    belongs to each quality? The ordinary new books are the random background books the reading model has
+    read (prep.l_pool). The qualities are switched from the ordinary book's value to this book's value one
+    after another in a random order, and each quality gets the change it caused, averaged over many orders
+    and many ordinary books. The contributions of a book add up exactly to that difference in score."""
+    X = prep.transform(take(raw, rows), None, ALL_BLOCKS)
     first = X.shape[1] - len(READ_NAMES)  # the reading columns are the last block
-    deltas = np.zeros((len(X), len(READ_NAMES)))
-    for j in range(len(READ_NAMES)):
-        Z = X.copy()
-        Z[:, first + j] = 0.0
-        deltas[:, j] = base - saved["full"].predict(Z)
-    out = []
-    for i in range(len(X)):
-        if not was_read[i]:
-            out.append(None)
-            continue
-        items = [{"name": READ_NAMES[j].replace("reading: ", ""), "value": round(float(raw["L"][i, j]), 2), "change": round(float(deltas[i, j]), 3),
-                  "scale": "1-5" if j < N_QUALITIES else "share"} for j in range(len(READ_NAMES))]
-        up = sorted((x for x in items if x["change"] > 0.004), key=lambda x: -x["change"])[:3]
-        down = sorted((x for x in items if x["change"] < -0.004), key=lambda x: x["change"])[:3]
-        out.append({"up": up, "down": down})
+    pool = np.clip((prep.l_pool - prep.l_mean) / prep.l_sd, -5, 5) * READ_USE
+    active = np.flatnonzero(READ_USE)
+    out = np.zeros((len(rows), len(READ_NAMES)))
+    for n, i in enumerate(rows):
+        rng = np.random.default_rng(zlib.crc32(str(keys[i]).encode()))
+        Z = np.repeat(X[n][None, :], REASON_ORDERS * (len(active) + 1), axis=0)
+        orders = []
+        for o in range(REASON_ORDERS):
+            order = rng.permutation(active)
+            orders.append(order)
+            base = o * (len(active) + 1)
+            Z[base:base + len(active) + 1, first:] = pool[rng.integers(len(pool))]
+            for step, j in enumerate(order, 1):  # from row "step" on, quality j has the book's own value
+                Z[base + step:base + len(active) + 1, first + j] = X[n, first + j]
+        pred = model.predict(Z)
+        for o, order in enumerate(orders):
+            base = o * (len(active) + 1)
+            out[n, order] += np.diff(pred[base:base + len(active) + 1])
+    return out / REASON_ORDERS
+
+
+def in_words(name, value, usual, share):
+    """"humour and irony: higher than usual (3.7 against 2.0)"."""
+    gap = value - usual
+    if share:
+        word = "about as usual" if abs(gap) < 0.05 else "more than usual" if gap > 0 else "less than usual"
+        return f"{name}: {word} ({100 * value:.0f}% against {100 * usual:.0f}%)"
+    word = "about as usual" if abs(gap) < 0.15 else "higher than usual" if gap > 0 else "lower than usual"
+    return f"{name}: {word} ({value:.1f} against {usual:.1f})"
+
+
+def reasons(saved, raw, keys, was_read):
+    """For every read book: the three qualities that raised its score most and the three that lowered it most.
+    A reason is the real contribution of the quality to this book's score, compared with an ordinary new book
+    (see contributions). It is computed with the same models that give the book its score: a book that was in
+    the training gets both from the models that did not see it."""
+    idx = np.flatnonzero(was_read)
+    total, count = np.zeros((len(keys), len(READ_NAMES))), np.zeros(len(keys))
+    for fold in saved.get("folds") or []:
+        rows = np.array([i for i in idx if keys[i] in fold["keys"]], dtype=int)
+        if len(rows) and fold.get("full") is not None:
+            total[rows] += contributions(fold["prep"], fold["full"], raw, rows, keys)
+            count[rows] += 1
+    rest = np.array([i for i in idx if count[i] == 0], dtype=int)
+    if len(rest):
+        total[rest] = contributions(saved["prep"], saved["full"], raw, rest, keys)
+        count[rest] = 1
+    usual = saved["prep"].l_pool.mean(axis=0)
+    out = [None] * len(keys)
+    for i in idx:
+        items = []
+        for j in np.flatnonzero(READ_USE):
+            share = j >= N_QUALITIES
+            name, value, change = READ_NAMES[j].replace("reading: ", ""), float(raw["L"][i, j]), float(total[i, j] / count[i])
+            if abs(value - usual[j]) < (0.05 if share else 0.15):
+                continue  # the book is ordinary in this quality: nothing to say in words
+            items.append({"name": name, "value": round(value, 2), "usual": round(float(usual[j]), 2), "change": round(change, 3),
+                          "scale": "share" if share else "1-5", "text": in_words(name, value, float(usual[j]), share)})
+        up = sorted((x for x in items if x["change"] >= REASON_MIN), key=lambda x: -x["change"])[:3]
+        down = sorted((x for x in items if x["change"] <= -REASON_MIN), key=lambda x: x["change"])[:3]
+        out[i] = {"up": up, "down": down, "total": round(float(total[i].sum() / count[i]), 3)}
     return out
 
 
@@ -768,7 +823,7 @@ def score(db, loader=None, everything=False):
         final, why = cheap.copy(), [None] * len(books)
         if was_read.any():
             final = np.where(was_read, predict(saved, raw, keys, "full", ALL_BLOCKS), cheap)
-            why = reasons(saved, raw, was_read)
+            why = reasons(saved, raw, keys, was_read)
             n_full = int(was_read.sum())
         # the liked books closest by text: my library plus the books I scored 4 or 5
         liked = [b for b in (loader.book("liked", r) for r in db.execute(LIKED_SQL)) if b]
@@ -808,7 +863,7 @@ def score(db, loader=None, everything=False):
 def main():
     cmd = sys.argv[1] if len(sys.argv) > 1 else ""
     if cmd not in ("train", "score"):
-        sys.exit("Use: recommend.py train   or   recommend.py score [--no-read]")
+        sys.exit("Use: recommend.py train   or   recommend.py score [--no-read] [--all]")
     db = connect()
     if cmd == "train":
         import fiction_check
@@ -824,7 +879,7 @@ def main():
         out = report.build(data)
         print(f"Model report: {out.relative_to(ROOT)}. Portrait of my taste: reports/portrait.md")
     else:
-        n = score(db)
+        n = score(db, everything="--all" in sys.argv)  # --all: every feed book again, not only the new and recent ones
         last = score.last
         # the reading model reads the best unread books of the day; then the books it read are scored again
         read = 0

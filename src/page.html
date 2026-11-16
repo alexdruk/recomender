@@ -378,6 +378,7 @@ function card(b) {
 
 // "humour and irony 4.2 (+0.12)": one quality and how much it moved the score
 function reasonText(r) {
+  if (r.text) return r.text;
   var value = r.scale === 'share' ? Math.round(r.value * 100) + '%' : r.value.toFixed(1);
   return r.name + ' ' + value + ' (' + (r.change > 0 ? '+' : '−') + Math.abs(r.change).toFixed(2) + ')';
 }
@@ -407,7 +408,7 @@ function readingBox(r) {
     reasonLine(box, 'Raised the score:', 'up', r.reasons.up);
     reasonLine(box, 'Lowered the score:', 'down', r.reasons.down);
     if (r.cheapScore !== null && r.cheapScore !== undefined) {
-      box.appendChild(el('div', 'why lab', 'Score before reading: ' + r.cheapScore.toFixed(2) + '. Each number is the rating from 1 to 5 and, in brackets, how much it moved the score.'));
+      box.appendChild(el('div', 'why lab', 'Score before reading: ' + r.cheapScore.toFixed(2) + '. In brackets: the rating of this book against an ordinary new book.'));
     }
   } else {
     box.appendChild(el('div', 'why lab', 'Its ratings are not in the score yet (they are used after the next training).'));

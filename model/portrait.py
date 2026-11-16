@@ -14,6 +14,7 @@ same comparison is drawn as a chart in reports/model.html.
 import json
 import sqlite3
 import sys
+import zlib
 from datetime import datetime
 from pathlib import Path
 
@@ -45,6 +46,39 @@ def compare(a, b, get):
     return {"a": float(x.mean()), "b": float(y.mean()), "diff": float(x.mean() - y.mean()), "d": float((x.mean() - y.mean()) / sd)}
 
 
+CHECK_BOOKS = 15
+
+
+def check_books(db):
+    """Library books from different genres with their romance and humour ratings, to compare with my own memory
+    of the books. One book per genre group (the group of the first genre code that is not "network literature"),
+    the biggest groups first; inside a group the book is picked by a fixed hash of its key, so the table shows
+    the same books every time, and second books from the biggest groups fill the table up to 15."""
+    codes = json.loads((reader.DATA / "genre-map.json").read_text(encoding="utf-8")).get("codes", {})
+    groups = {}
+    for r in db.execute("""SELECT b.key, b.authors, b.title, p.genres, d.ratings FROM books b
+            JOIN parsed p ON p.source = 'liked_fb2' AND p.key = b.key
+            JOIN readings d ON d.key = b.key AND d.model = ? AND d.version = ?""", (reader.MODEL, reader.VERSION)):
+        names = [codes[c] for c in json.loads(r["genres"] or "[]") if c in codes and c != "network_literature" and codes[c] != "nonfiction"]
+        if not names:
+            continue
+        try:
+            authors = ", ".join(json.loads(r["authors"])[:2])
+        except (TypeError, ValueError):
+            authors = r["authors"] or ""
+        ratings = json.loads(r["ratings"])
+        groups.setdefault(names[0], []).append({"key": r["key"], "genre": names[0], "authors": authors, "title": r["title"],
+                                                 "romance": ratings["romance"], "humour": ratings["humour"]})
+    for books in groups.values():
+        books.sort(key=lambda b: zlib.crc32(f"check:{b['key']}".encode()))
+    order = sorted(groups, key=lambda g: (-len(groups[g]), g))
+    out, depth = [], 0
+    while len(out) < CHECK_BOOKS and any(len(groups[g]) > depth for g in order):
+        out += [groups[g][depth] for g in order if len(groups[g]) > depth][:CHECK_BOOKS - len(out)]
+        depth += 1
+    return sorted(out, key=lambda b: (order.index(b["genre"]), b["authors"]))
+
+
 def build(db):
     db.row_factory = sqlite3.Row
     reader.ensure_tables(db)
@@ -67,6 +101,7 @@ def build(db):
             sa, sb = (na + 0.5) / (len(lib) + 1), (nb + 0.5) / (len(bg) + 1)
             themes.append({"name": t, "lib": na, "bg": nb, "lib_share": na / len(lib), "bg_share": nb / len(bg), "ratio": sa / sb})
         data.update(qualities=quals, voice=voice, themes=themes)
+        data["check"] = check_books(db)
     data["scores_ready"] = n_scored_read >= MIN_SCORES and len(high) >= 5 and len(low) >= 5
     if data["scores_ready"]:
         data["by_score"] = [{"id": q, "name": reader.Q_NAMES[q], **compare(high, low, lambda r, q=q: r["ratings"][q])} for q in reader.Q_IDS]
@@ -125,6 +160,13 @@ def markdown(p):
         out.append("| (none stands out) | | | |")
     if under:
         out += ["", "Themes that my library has less often: " + ", ".join(f"{t['name']} ({100 * t['lib_share']:.0f}% against {100 * t['bg_share']:.0f}%)" for t in under) + "."]
+    if p.get("check"):
+        out += ["", "## Check it yourself", "",
+                f"The romance line and humour ratings of {len(p['check'])} books of my library from different genres (1 = none, 5 = the heart of the book). "
+                "If they look wrong for books I know well, the portrait above deserves less trust.", "",
+                "| Genre | Author | Title | Romance line | Humour and irony |", "|---|---|---|---:|---:|"]
+        for b in p["check"]:
+            out.append(f"| {b['genre']} | {b['authors']} | {b['title'].replace('|', '/')} | {b['romance']:.1f} | {b['humour']:.1f} |")
     out += ["", "## My high scores against my low scores", ""]
     if p["scores_ready"]:
         rows = sorted(p["by_score"], key=lambda q: -abs(q["d"]))
